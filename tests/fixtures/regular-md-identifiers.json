@@ -1,0 +1,113 @@
+{
+  "regular_md_local": {
+    "equipment": {
+      "AA_Equipment": "common/units/equipment/MD_anti_air.txt",
+      "H_AT_Equipment": "common/units/equipment/MD_anti_tank.txt",
+      "L_AT_Equipment": "common/units/equipment/MD_anti_tank.txt",
+      "artillery_equipment": "common/units/equipment/MD_artillery.txt",
+      "cnc_equipment_type": "common/units/equipment/MD_electronic_equipment.txt",
+      "convoy": "common/units/equipment/MD_convoys.txt",
+      "infantry_weapons_type": "common/units/equipment/MD_infantry_equipment.txt",
+      "land_drone_equipment_type": "common/units/equipment/MD_infantry_equipment.txt"
+    },
+    "outlooks": [
+      [
+        "fascism",
+        "1"
+      ],
+      [
+        "communism",
+        "2"
+      ],
+      [
+        "democratic",
+        "3"
+      ],
+      [
+        "neutrality",
+        "4"
+      ],
+      [
+        "nationalist",
+        "5"
+      ]
+    ],
+    "priority_roles": [
+      "armor",
+      "ifv_mechanized",
+      "infantry"
+    ],
+    "repository": "MillenniumDawn/Millennium-Dawn",
+    "source_sha256": {
+      "common/ai_templates/MD_generic.txt": "b4c15738928d1bd83e5a9300ed67c98d019fa1480f642db650859fb12c50cb11",
+      "common/ideologies/00_ideologies.txt": "5c5e581be3b5f732aeb5219d55f042321ba671b4854de1fac57f9ea89ebc194d",
+      "common/units/equipment/MD_anti_air.txt": "3fccc4a349351fd6e61097f516a702bf685fd6fb8413f5739be6401b3561accb",
+      "common/units/equipment/MD_anti_tank.txt": "194c02dd84a4c706e7430d8add0c539ea762661790835a6fb87dd815d84d1b95",
+      "common/units/equipment/MD_artillery.txt": "bfc4dc32ef567c3b6b38c3cfee149fc667dfda46cb98f62aa0dca09e12ff84cc",
+      "common/units/equipment/MD_convoys.txt": "d75201111e3edd820f960f82e95fed638df0eca3df44c659fcd178b83bf7838a",
+      "common/units/equipment/MD_electronic_equipment.txt": "3143a8f3f64cd76f5ee7518270d4042a286ac5cc35efe8c89fef7bf530daaac3",
+      "common/units/equipment/MD_infantry_equipment.txt": "d51ad5adc0bc4cb3e98595894dfc8a6bd66d820888c8ac7f392efc4789c584fa",
+      "descriptor.mod": "6fa17352ececa059629c6e4f123453c3681c560b68cd533171ccb0fb3c5915a0",
+      "localisation/english/parties_l_english.yml": "a2ada2f0f84465718e11ec1e69274142473814703f6f7dec8f7f84b66a633f6a"
+    },
+    "supported_version": "1.19.*",
+    "verified_commit": "2efae2f406d73346d85cb59f339a4f917c4b6869",
+    "workshop_id": "2777392649"
+  },
+  "regular_md_upstream": {
+    "equipment": {
+      "AA_Equipment": "common/units/equipment/MD_anti_air.txt",
+      "H_AT_Equipment": "common/units/equipment/MD_anti_tank.txt",
+      "L_AT_Equipment": "common/units/equipment/MD_anti_tank.txt",
+      "artillery_equipment": "common/units/equipment/MD_artillery.txt",
+      "cnc_equipment_type": "common/units/equipment/MD_electronic_equipment.txt",
+      "convoy": "common/units/equipment/MD_convoys.txt",
+      "infantry_weapons_type": "common/units/equipment/MD_infantry_equipment.txt",
+      "land_drone_equipment_type": "common/units/equipment/MD_infantry_equipment.txt"
+    },
+    "outlooks": [
+      [
+        "fascism",
+        "1"
+      ],
+      [
+        "communism",
+        "2"
+      ],
+      [
+        "democratic",
+        "3"
+      ],
+      [
+        "neutrality",
+        "4"
+      ],
+      [
+        "nationalist",
+        "5"
+      ]
+    ],
+    "priority_roles": [
+      "armor",
+      "ifv_mechanized",
+      "infantry"
+    ],
+    "repository": "MillenniumDawn/Millennium-Dawn",
+    "source_sha256": {
+      "common/ai_templates/MD_generic.txt": "b4c15738928d1bd83e5a9300ed67c98d019fa1480f642db650859fb12c50cb11",
+      "common/ideologies/00_ideologies.txt": "5c5e581be3b5f732aeb5219d55f042321ba671b4854de1fac57f9ea89ebc194d",
+      "common/units/equipment/MD_anti_air.txt": "00dd6287ff63e0ec82c2202bb2b0af2cb8cdee270c9f27986cdd0764d44c9cce",
+      "common/units/equipment/MD_anti_tank.txt": "7ff3e62952e11884bfdc270ce7d6e86f0aa216e434a766611097f6c8a1874476",
+      "common/units/equipment/MD_artillery.txt": "0b320282ea3dcc21ca85b073294cf4a07191e622b6490705b242c37eeb1621f3",
+      "common/units/equipment/MD_convoys.txt": "d75201111e3edd820f960f82e95fed638df0eca3df44c659fcd178b83bf7838a",
+      "common/units/equipment/MD_electronic_equipment.txt": "2a69f0944e4103130b27712af2a02555ccdcd2c43aba148be6aefe798a454a51",
+      "common/units/equipment/MD_infantry_equipment.txt": "dddc10a1bf2a3305cc42f72fadd852edbeffb4e83dd171aa366525c88b4b78ac",
+      "descriptor.mod": "6fa17352ececa059629c6e4f123453c3681c560b68cd533171ccb0fb3c5915a0",
+      "localisation/english/parties_l_english.yml": "da21b28796a1805957e7e7b6b49d03ade51147e02400929b4e1f726017f2283a"
+    },
+    "supported_version": "1.19.*",
+    "verified_commit": "80fdb7476c2a8c4de9ef6d41299fd50ae481c499",
+    "workshop_id": "2777392649"
+  },
+  "unaffected_native_profiles": "byte-identical after newline normalization"
+}

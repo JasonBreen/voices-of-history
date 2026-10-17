@@ -13,7 +13,11 @@ dry-run guards also apply to the baseline path.
 | --- | --- | --- |
 | `python launcher.py` | Original `HOI4_AI_Diplomacy` | Existing base-game behavior and full original catalog |
 | `config-unified-*.json` | Separate `HOI4_AI_Voices_Universal` | Compact dialogue, typed/journaled effects, optional strategic reviews |
-| `config-md-oem.json`, `config-cwic-dev.json`, `config-tfr.json` | Separate corresponding `HOI4_AI_Voices_*` | Broader legacy plans and limited overhaul-compatible generic effects |
+| `config-md.json`, `config-cwic-dev.json`, `config-tfr.json` | Separate corresponding `HOI4_AI_Voices_*` | Broader legacy plans and limited overhaul-compatible generic effects |
+
+The MD profile targets [regular upstream Millennium Dawn](MILLENNIUM_DAWN_COMPATIBILITY.md),
+Workshop item `2777392649`; it does not select the OEM distribution. Use
+`config-unified-md.json` or `config-md.json`, with profile `millennium_dawn`.
 
 All added configuration examples use Player2, dry run and explicit expanded
 personality settings. Copy an example to an ignored `config.local.json` before
@@ -32,7 +36,7 @@ Install a separate unified adapter while the game is closed:
 .\.venv\Scripts\python.exe unified_mod.py --userdir "C:/Users/YOU/Documents/Paradox Interactive/Hearts of Iron IV" --profile vanilla --initial
 ```
 
-Select `vanilla`, `millennium_dawn_oem`, `cwic_dev` or `the_fire_rises`.
+Select `vanilla`, `millennium_dawn`, `cwic_dev` or `the_fire_rises`.
 `--legacy` installs the corresponding broader overhaul adapter instead of the
 unified adapter; vanilla uses the original entry for its full catalog.
 The installer refuses an existing destination on initial installation. Subsequent
@@ -69,14 +73,17 @@ to inspect selection without starting either process. `VoicesLauncher.cs` is an
 optional source adapter for Paradox's executable entry; build it locally with the
 Windows C# compiler and keep the resulting binary private. No executable is shipped.
 
-Existing descriptor aliases recognize `MD_OEM_LOCAL.mod`,
-`Cold_War_Iron_Curtain.mod` and TFR's `ugc_3350890356.mod`. For another local filename,
+Regular MD is recognized by verified Workshop metadata (`ugc_2777392649.mod`) or
+`MD_LOCAL_STANDARD.mod`, including renamed selected descriptors with matching regular
+metadata. Other existing aliases recognize `Cold_War_Iron_Curtain.mod` and TFR's `ugc_3350890356.mod`. For another local filename,
 put an explicit mapping in `voices-profiles.json` in the HOI4 user directory:
 
 ```json
 {"mod/my-cwic.mod":"cwic_dev"}
 ```
 
+Regular-MD mappings must also pass the Workshop ID and regular release/developer
+distribution-name checks; an explicit alias cannot turn an OEM source into regular MD.
 The bridge/installer reads that descriptor's actual display name for load-order
 dependencies and its source path for characterization. Duplicate entries, mixed
 overhauls, wrong load order, unknown extras and mismatched profiles are rejected.
@@ -217,5 +224,4 @@ campaign; verify profile/date/leader and minor-country selection; check the UI
 placement; pause/reload and compare exports; test legacy concurrent plan choices;
 then separately approve a bounded live effect, confirm game.log, verify the resulting
 saved state and expiry, and confirm pilot priorities leave normal AI behavior intact.
-No native game was launched for this contribution. Earlier local MD observations
-are historical context, not acceptance evidence for this patch.
+No native game was launched for this contribution. Earlier OEM observations do not establish regular-MD acceptance.

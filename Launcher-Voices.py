@@ -9,14 +9,14 @@ import subprocess
 import sys
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from unified_mod import select_unified, CONFIGS, install_or_compile, characterization_source, configure_bases
+from unified_mod import select_unified, CONFIGS, install_or_compile, characterization_source, configure_bases, BASES
 
 ROOT = Path(__file__).resolve().parent
 USERDIR = Path(os.environ.get("VOICES_USERDIR", Path.home() / "Documents/Paradox Interactive/Hearts of Iron IV"))
 DATA = ROOT / "middleware/user-data"
 PROFILES = {
     frozenset({"mod/HOI4_AI_Voices_ChatGPT.mod"}): "config.json",
-    frozenset({"mod/MD_OEM_LOCAL.mod", "mod/HOI4_AI_Voices_MD_OEM.mod"}): "config-md-oem.json",
+    frozenset({"mod/MD_LOCAL_STANDARD.mod", "mod/HOI4_AI_Voices_MD.mod"}): "config-md.json",
     frozenset({"mod/Cold_War_Iron_Curtain.mod", "mod/HOI4_AI_Voices_CWIC_Dev.mod"}): "config-cwic-dev.json",
     frozenset({"mod/ugc_3350890356.mod", "mod/HOI4_AI_Voices_TFR.mod"}): "config-tfr.json",
 }
@@ -26,6 +26,10 @@ def select_profile(enabled_mods):
     unified = select_unified(enabled_mods)
     if unified:
         return CONFIGS[unified]
+    if "mod/HOI4_AI_Voices_MD.mod" in enabled_mods:
+        bases = [entry for entry in enabled_mods if BASES.get(entry) == "millennium_dawn"]
+        if len(enabled_mods) == 2 and len(set(enabled_mods)) == 2 and len(bases) == 1:
+            return "config-md.json"
     profile = PROFILES.get(frozenset(enabled_mods))
     if not profile or len(enabled_mods) != len(set(enabled_mods)):
         raise RuntimeError("Activate a dedicated playset containing one Voices test entry and its matching overhaul.")
@@ -59,12 +63,12 @@ def process_ids(name, command_contains=None):
 
 def main(forwarded):
     DATA.mkdir(exist_ok=True)
-    configure_bases(USERDIR)
     selection = json.loads((USERDIR / "dlc_load.json").read_text(encoding="utf-8"))
+    configure_bases(USERDIR, selection.get("enabled_mods", []))
     config_name = select_profile(selection.get("enabled_mods", []))
     config_path = ROOT / "middleware" / config_name
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    detected = select_unified(selection.get("enabled_mods", []))
+    detected = select_unified(selection.get("enabled_mods", [])) or ("millennium_dawn" if config_name == "config-md.json" else None)
     if detected and cfg.get("game_profile") != detected:
         raise RuntimeError("The selected mod profile disagrees with its middleware configuration: " + config_name)
     original = json.loads((ROOT / "launcher-bridge.json").read_text(encoding="utf-8"))

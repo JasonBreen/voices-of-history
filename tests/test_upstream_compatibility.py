@@ -131,7 +131,7 @@ class UpstreamCompatibilityTests(unittest.TestCase):
 
     def test_generated_native_scripts_have_balanced_blocks_and_no_foreign_assets(self):
         import re
-        for profile in ('vanilla', 'cwic_dev', 'millennium_dawn_oem', 'the_fire_rises'):
+        for profile in ('vanilla', 'cwic_dev', 'millennium_dawn', 'the_fire_rises'):
             for legacy in (False, True) if profile != 'vanilla' else (False,):
                 files = render(profile, unified=not legacy)
                 self.assertNotIn(b'path=', files['descriptor.mod'])

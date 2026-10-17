@@ -7,14 +7,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "middleware"))
 import functions
 import game_state
 from main import load_config
-from profiles import MD_OEM
+from profiles import MD
 from chatgpt_client import ChatGPTPlanClient
 from test_chatgpt import FakeResponse
 
 
 class MillenniumDawnProfileTests(unittest.TestCase):
     def setUp(self):
-        functions.configure_profile(MD_OEM)
+        functions.configure_profile(MD)
 
     def tearDown(self):
         functions.configure_profile("vanilla")
@@ -23,8 +23,8 @@ class MillenniumDawnProfileTests(unittest.TestCase):
         for code, expected in (("1", "Salafist Outlook"), ("2", "Emerging Outlook"),
                                ("3", "Western Outlook"), ("4", "Non-Aligned Outlook"),
                                ("5", "Nationalist Outlook")):
-            state = game_state.parse_state_line(f"AIDIPLO_STATE|profile={MD_OEM}|tag=SOV|ideo={code}")
-            nation = game_state.parse_nation(f"AIDIPLO_NATION|profile={MD_OEM}|tag=SOV|ideo={code}")
+            state = game_state.parse_state_line(f"AIDIPLO_STATE|profile={MD}|tag=SOV|ideo={code}")
+            nation = game_state.parse_nation(f"AIDIPLO_NATION|profile={MD}|tag=SOV|ideo={code}")
             self.assertEqual(state["ideology_name"], expected)
             self.assertEqual(nation["ideology_name"], expected)
         self.assertEqual(game_state.parse_state_line("AIDIPLO_STATE|tag=SOV|ideo=2")["ideology_name"], "Communism")
@@ -56,14 +56,14 @@ class MillenniumDawnProfileTests(unittest.TestCase):
     def test_profiles_keep_their_own_localisation_and_memory(self):
         root = Path(__file__).resolve().parents[1]
         vanilla = load_config()
-        md = load_config(root / "middleware/config-md-oem.json")
+        md = load_config(root / "middleware/config-md.json")
         self.assertNotEqual(md["paths"]["mod_localisation"], vanilla["paths"]["mod_localisation"])
         self.assertNotEqual(md["paths"]["memory_db"], vanilla["paths"]["memory_db"])
         self.assertTrue(md["injection"]["dry_run"])
         self.assertFalse(vanilla["injection"]["dry_run"])
 
     def test_provider_receives_md_context_and_actual_dry_run_mode(self):
-        client = ChatGPTPlanClient({"game_profile": MD_OEM,
+        client = ChatGPTPlanClient({"game_profile": MD,
                                   "chatgpt_plan": {"model": "test-model"},
                                   "injection": {"dry_run": True}})
         client.auth = type("Auth", (), {"get_access_token": lambda self: "fake-token"})()
@@ -71,7 +71,7 @@ class MillenniumDawnProfileTests(unittest.TestCase):
         with patch("chatgpt_client.requests.post", return_value=FakeResponse(lines=lines)) as request:
             client.chat([{"role": "user", "content": "Test"}])
         instructions = request.call_args.kwargs["json"]["instructions"]
-        self.assertIn("Millennium Dawn OEM", instructions)
+        self.assertIn("Millennium Dawn", instructions)
         self.assertIn("communism=Emerging Outlook", instructions)
         self.assertIn("EXECUTION MODE: DRY RUN", instructions)
 

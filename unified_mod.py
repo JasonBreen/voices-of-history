@@ -12,14 +12,15 @@ NAME = "Voices of History - Unified ChatGPT"
 ENTRY = "mod/HOI4_AI_Voices_Universal.mod"
 FOLDER = "HOI4_AI_Voices_Universal"
 OWNER = "voices-unified-2026-10"
-BASES = {"mod/MD_OEM_LOCAL.mod": "millennium_dawn_oem",
+BASES = {"mod/MD_LOCAL_STANDARD.mod": "millennium_dawn",
+         "mod/ugc_2777392649.mod": "millennium_dawn",
          "mod/Cold_War_Iron_Curtain.mod": "cwic_dev",
          "mod/ugc_3350890356.mod": "the_fire_rises"}
 CONFIGS = {"vanilla": "config-unified-vanilla.json",
-           "millennium_dawn_oem": "config-unified-md-oem.json",
+           "millennium_dawn": "config-unified-md.json",
            "cwic_dev": "config-unified-cwic-dev.json",
            "the_fire_rises": "config-unified-tfr.json"}
-DEPENDENCIES = {"millennium_dawn_oem": "Millennium Dawn OEM Local",
+DEPENDENCIES = {"millennium_dawn": "Millennium Dawn: A Modern Day Mod",
                 "cwic_dev": "Cold War Iron Curtain Dev Build", "the_fire_rises": "The Fire Rises"}
 
 
@@ -42,7 +43,11 @@ def characterization_source(enabled, userdir, game_dir):
     """Bind references to the same selected source the game will load, never stale config."""
     profile = select_unified(enabled)
     if not profile:
-        return None
+        md_bases = [entry for entry in enabled if BASES.get(entry) == "millennium_dawn"]
+        if "mod/HOI4_AI_Voices_MD.mod" in enabled and len(enabled) == len(set(enabled)) == 2 and len(md_bases) == 1:
+            profile = "millennium_dawn"
+        else:
+            return None
     if profile == "vanilla":
         source = Path(game_dir).resolve()
     else:
@@ -56,6 +61,10 @@ def characterization_source(enabled, userdir, game_dir):
         if not source.is_absolute():
             source = Path(userdir) / source
         source = source.resolve()
+    if profile == "millennium_dawn":
+        from middleware.md_compat import require_regular_md
+        require_regular_md(descriptor)
+        require_regular_md(source / "descriptor.mod")
     if not (source / "history/countries").is_dir():
         raise RuntimeError("The selected game's country source is missing: " + str(source))
     return source
@@ -126,7 +135,7 @@ def render(profile, unified=True):
     sys.path.insert(0, str(ROOT / "middleware"))
     from profiles import CWIC_GROUPS, TFR_GROUPS
     groups = {"vanilla": ("fascism", "communism", "democratic", "neutrality"),
-              "millennium_dawn_oem": ("fascism", "communism", "democratic", "neutrality", "nationalist"),
+              "millennium_dawn": ("fascism", "communism", "democratic", "neutrality", "nationalist"),
               "cwic_dev": tuple(k for k, _ in CWIC_GROUPS),
               "the_fire_rises": tuple(k for k, _ in TFR_GROUPS)}[profile]
     if not unified:
@@ -141,6 +150,8 @@ def render(profile, unified=True):
             raise ValueError("No legacy adapter for profile: " + profile)
         files.update({p.relative_to(overlay).as_posix(): p.read_bytes()
                       for p in overlay.rglob("*") if p.is_file()})
+        if profile == "millennium_dawn":
+            files["descriptor.mod"] += f'dependencies={{ "{DEPENDENCIES[profile]}" }}\n'.encode()
         return files
     template = ROOT / "native/shared"
     if not template.is_dir():
@@ -197,7 +208,7 @@ voices_mobile_priority = {
  ai_strategy = { type = role_ratio id = motorized value = 5 }
 }
 '''
-    if profile == "millennium_dawn_oem":
+    if profile == "millennium_dawn":
         # MD's verified mobile template role is ifv_mechanized, not motorized.
         priority_file = "common/ai_strategy/voices_priorities.txt"
         files[priority_file] = files[priority_file].replace(b"id = motorized", b"id = ifv_mechanized")
@@ -212,7 +223,7 @@ def install_or_compile(userdir, profile, initial=False, legacy=False):
     """Only replace our unchanged generated files. Never modify a playset or base mod."""
     userdir = Path(userdir).resolve()
     mods = userdir / "mod"
-    folder = ({"millennium_dawn_oem": "HOI4_AI_Voices_MD_OEM",
+    folder = ({"millennium_dawn": "HOI4_AI_Voices_MD",
                "cwic_dev": "HOI4_AI_Voices_CWIC_Dev",
                "the_fire_rises": "HOI4_AI_Voices_TFR"}[profile] if legacy else FOLDER)
     target = (mods / folder).resolve()
@@ -289,26 +300,42 @@ def install_or_compile(userdir, profile, initial=False, legacy=False):
 
 
 
-def configure_bases(userdir):
-    """Optional explicit descriptor aliases for installations with different filenames."""
-    path = Path(userdir) / "voices-profiles.json"
-    if not path.exists():
-        return
-    mapping = json.loads(path.read_text(encoding="utf-8"))
+def configure_bases(userdir, enabled=None):
+    """Resolve explicit aliases and regular MD metadata from the selected descriptors."""
+    from middleware.md_compat import is_regular_md, require_regular_md, quoted_field
+    userdir = Path(userdir)
+    mapping_path = userdir / "voices-profiles.json"
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8")) if mapping_path.exists() else {}
     if not isinstance(mapping, dict):
         raise ValueError("voices-profiles.json must map mod descriptors to profiles.")
+    if enabled is None:
+        playset = userdir / "dlc_load.json"
+        enabled = json.loads(playset.read_text(encoding="utf-8")).get("enabled_mods", []) if playset.exists() else []
+    for entry in enabled:
+        candidate = Path(entry)
+        if candidate.is_absolute() or candidate.parent.as_posix() != "mod" or candidate.suffix != ".mod":
+            continue
+        descriptor = userdir / candidate
+        if descriptor.is_file() and is_regular_md(descriptor):
+            mapping[entry] = "millennium_dawn"
+    selected_names = {}
     for entry, profile in mapping.items():
         candidate = Path(entry)
         if (not isinstance(profile, str) or profile not in DEPENDENCIES or
                 candidate.is_absolute() or candidate.parent.as_posix() != "mod" or candidate.suffix != ".mod"):
             raise ValueError("Invalid explicit base descriptor mapping.")
-        descriptor = Path(userdir) / candidate
-        fields = descriptor_fields(descriptor.read_bytes())
-        value = fields.get("name", ())
-        if len(value) != 1 or not value[0].startswith('"'):
-            raise ValueError("The mapped base descriptor needs one quoted name.")
+        descriptor = userdir / candidate
+        text = descriptor.read_text(encoding="utf-8-sig")
+        name = quoted_field(text, "name")
+        if profile == "millennium_dawn":
+            require_regular_md(descriptor)
         BASES[entry] = profile
-        DEPENDENCIES[profile] = value[0][1:-1]
+        if entry in enabled or not enabled:
+            selected_names.setdefault(profile, set()).add(name)
+    for profile, names in selected_names.items():
+        if len(names) != 1:
+            raise ValueError("More than one selected base descriptor maps to profile: " + profile)
+        DEPENDENCIES[profile] = names.pop()
 
 if __name__ == "__main__":
     import argparse

@@ -74,14 +74,14 @@ class TFRTests(unittest.TestCase):
         self.assertEqual(cfg["provider"], "player2")
         self.assertIn("THE FIRE RISES ACTION CATALOG", functions.catalog_text())
         self.assertIn("EXECUTION MODE: DRY RUN", model_instructions(cfg))
-        for other in ("config.json", "config-md-oem.json", "config-cwic-dev.json"):
+        for other in ("config.json", "config-md.json", "config-cwic-dev.json"):
             other_cfg = load_config(ROOT / "middleware" / other)
             self.assertNotEqual(cfg["paths"]["memory_db"], other_cfg["paths"]["memory_db"])
             self.assertNotEqual(cfg["paths"]["mod_localisation"], other_cfg["paths"]["mod_localisation"])
         pair = ["mod/ugc_3350890356.mod", "mod/HOI4_AI_Voices_TFR.mod"]
         self.assertEqual(bridge.select_profile(pair), "config-tfr.json")
         self.assertEqual(bridge.select_profile(pair[::-1]), "config-tfr.json")
-        for invalid in (pair[:1], pair + ["mod/extra.mod"], pair + pair, [pair[0], "mod/HOI4_AI_Voices_MD_OEM.mod"]):
+        for invalid in (pair[:1], pair + ["mod/extra.mod"], pair + pair, [pair[0], "mod/HOI4_AI_Voices_MD.mod"]):
             with self.assertRaises(RuntimeError):
                 bridge.select_profile(invalid)
 

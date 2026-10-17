@@ -11,7 +11,7 @@ import functions
 import prompts
 from chatgpt_client import ChatGPTPlanClient
 from main import App, load_realism_settings
-from profiles import TFR, MD_OEM, TFR_REACTION_STYLE
+from profiles import TFR, MD, TFR_REACTION_STYLE
 from tfr_lore import TFRLore, character_blocks
 from test_chatgpt import FakeResponse
 
@@ -94,7 +94,7 @@ class TFRLoreAndRealismTests(unittest.TestCase):
         self.assertIn("REALISM MODE = TFR STYLE", new)
         self.assertNotIn("REALISM MODE = TFR SETTING-GROUNDED", new)
         self.assertEqual(prompts.realism_mode_options()[1][0], "TFR style")
-        functions.configure_profile(MD_OEM)
+        functions.configure_profile(MD)
         self.assertEqual(prompts.difficulty_block(), prompts.DIFFICULTY_MODES["plausible"])
         self.assertEqual(prompts.realism_mode_options()[1][0], "Plausible")
 

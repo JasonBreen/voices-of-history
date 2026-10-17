@@ -52,7 +52,7 @@ class CWICAndLauncherTests(unittest.TestCase):
 
     def test_cwic_configuration_is_separate_and_dry(self):
         cwic = load_config(ROOT / "middleware/config-cwic-dev.json")
-        md = load_config(ROOT / "middleware/config-md-oem.json")
+        md = load_config(ROOT / "middleware/config-md.json")
         self.assertNotEqual(cwic["paths"]["memory_db"], md["paths"]["memory_db"])
         self.assertNotEqual(cwic["paths"]["mod_localisation"], md["paths"]["mod_localisation"])
         self.assertTrue(cwic["injection"]["dry_run"])
@@ -63,11 +63,11 @@ class CWICAndLauncherTests(unittest.TestCase):
     def test_launcher_selects_only_matching_playsets(self):
         self.assertEqual(bridge.select_profile(["mod/Cold_War_Iron_Curtain.mod", "mod/HOI4_AI_Voices_CWIC_Dev.mod"]),
                          "config-cwic-dev.json")
-        self.assertEqual(bridge.select_profile(["mod/HOI4_AI_Voices_MD_OEM.mod", "mod/MD_OEM_LOCAL.mod"]),
-                         "config-md-oem.json")
+        self.assertEqual(bridge.select_profile(["mod/HOI4_AI_Voices_MD.mod", "mod/MD_LOCAL_STANDARD.mod"]),
+                         "config-md.json")
         for mods in (["mod/Cold_War_Iron_Curtain.mod"],
-                     ["mod/Cold_War_Iron_Curtain.mod", "mod/HOI4_AI_Voices_MD_OEM.mod"],
-                     ["mod/MD_OEM_LOCAL.mod", "mod/HOI4_AI_Voices_MD_OEM.mod", "mod/Cold_War_Iron_Curtain.mod"]):
+                     ["mod/Cold_War_Iron_Curtain.mod", "mod/HOI4_AI_Voices_MD.mod"],
+                     ["mod/MD_LOCAL_STANDARD.mod", "mod/HOI4_AI_Voices_MD.mod", "mod/Cold_War_Iron_Curtain.mod"]):
             with self.assertRaises(RuntimeError):
                 bridge.select_profile(mods)
 

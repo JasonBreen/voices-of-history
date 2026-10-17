@@ -27,8 +27,8 @@ class ForeignDiplomacyTests(unittest.TestCase):
     def test_non_vanilla_political_groups_never_hide_minor_countries(self):
         world = {}
         for profile, code, tag in [('cwic_dev', '8', 'ABC'), ('cwic_dev', '19', 'DEF'),
-                                   ('millennium_dawn_oem', '3', 'GHI'),
-                                   ('millennium_dawn_oem', '5', 'JKL')]:
+                                   ('millennium_dawn', '3', 'GHI'),
+                                   ('millennium_dawn', '5', 'JKL')]:
             world[tag] = gs.parse_nation(f'AIDIPLO_NATION|profile={profile}|tag={tag}|name={tag}|ideo={code}')
         block = gs.world_snapshot_block(world)
         for tag, nation in world.items():

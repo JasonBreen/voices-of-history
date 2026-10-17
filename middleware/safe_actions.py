@@ -8,7 +8,7 @@ import sqlite3
 import time
 import uuid
 
-from profiles import MD_OEM, CWIC_DEV, TFR, MD_EQUIPMENT, CWIC_EQUIPMENT, TFR_EQUIPMENT
+from profiles import MD, CWIC_DEV, TFR, MD_EQUIPMENT, CWIC_EQUIPMENT, TFR_EQUIPMENT
 
 
 def text_only(text):
@@ -36,7 +36,7 @@ elections, leader changes or custom-overhaul systems. Unsupported requests stay 
 
 
 def equipment_set(profile):
-    return {MD_OEM: MD_EQUIPMENT, CWIC_DEV: CWIC_EQUIPMENT, TFR: TFR_EQUIPMENT}.get(
+    return {MD: MD_EQUIPMENT, CWIC_DEV: CWIC_EQUIPMENT, TFR: TFR_EQUIPMENT}.get(
         profile, TFR_EQUIPMENT)
 
 

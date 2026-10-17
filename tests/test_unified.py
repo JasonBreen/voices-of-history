@@ -50,7 +50,7 @@ class BudgetTests(unittest.TestCase):
         self.now[0] += 601
         self.budget = UsageBudget(self.path, self.cfg, lambda: self.now[0])
         for _ in range(3):
-            self.request(profile="millennium_dawn_oem")
+            self.request(profile="millennium_dawn")
         self.now[0] += 601
         with self.assertRaises(BudgetExceeded):
             self.request()
@@ -133,7 +133,7 @@ class UnifiedNativeTests(unittest.TestCase):
             for _ in range(2):
                 install_or_compile(userdir, "the_fire_rises")
                 self.assertEqual(path.read_bytes(), formatted)
-            for profile in ("vanilla", "millennium_dawn_oem", "cwic_dev", "the_fire_rises"):
+            for profile in ("vanilla", "millennium_dawn", "cwic_dev", "the_fire_rises"):
                 install_or_compile(userdir, profile)
                 expected = render(profile)["descriptor.mod"] + f'path="{(userdir / "mod" / FOLDER).resolve().as_posix()}"\n'.encode()
                 self.assertTrue(descriptor_matches(path.read_bytes(), expected))
@@ -175,14 +175,14 @@ class UnifiedNativeTests(unittest.TestCase):
 
     def test_only_selected_ideologies_and_native_priority_expiry(self):
         expected = {"vanilla": {"fascism", "communism", "democratic", "neutrality"},
-                    "millennium_dawn_oem": {"fascism", "communism", "democratic", "neutrality", "nationalist"}}
+                    "millennium_dawn": {"fascism", "communism", "democratic", "neutrality", "nationalist"}}
         import re
         from profiles import TFR_GROUPS, CWIC_GROUPS
         expected["the_fire_rises"] = {k for k, _ in TFR_GROUPS}
         expected["cwic_dev"] = {k for k, _ in CWIC_GROUPS}
         for profile in CONFIGS:
             files = render(profile)
-            dependency = {"millennium_dawn_oem": "Millennium Dawn OEM Local", "cwic_dev": "Cold War Iron Curtain Dev Build", "the_fire_rises": "The Fire Rises"}.get(profile)
+            dependency = {"millennium_dawn": "Millennium Dawn: A Modern Day Mod", "cwic_dev": "Cold War Iron Curtain Dev Build", "the_fire_rises": "The Fire Rises"}.get(profile)
             if dependency:
                 self.assertIn(f'dependencies={{ "{dependency}" }}'.encode(), files["descriptor.mod"])
             else:
@@ -351,8 +351,8 @@ class UnifiedTurnTests(unittest.TestCase):
     def test_foreign_voice_uses_current_named_speaker_and_current_message_language(self):
         with tempfile.TemporaryDirectory() as temp:
             app = App.__new__(App)
-            app.cfg = {"unified": True, "game_profile": "millennium_dawn_oem", "usage": {"ledger": str(Path(temp) / "usage.sqlite3")}, "actions": {"live_approved": False}}
-            app.latest_state = {"profile": "millennium_dawn_oem", "tag": "USA", "name": "United States", "leader": "Bill Clinton", "gid": "17", "day": "1", "date": "2000.1.1", "live": True}
+            app.cfg = {"unified": True, "game_profile": "millennium_dawn", "usage": {"ledger": str(Path(temp) / "usage.sqlite3")}, "actions": {"live_approved": False}}
+            app.latest_state = {"profile": "millennium_dawn", "tag": "USA", "name": "United States", "leader": "Bill Clinton", "gid": "17", "day": "1", "date": "2000.1.1", "live": True}
             app.world = {"SOV": {"tag": "SOV", "leader": "Current Representative", "name": "Russia"}}
             provider = Mock()
             provider.last_usage = None

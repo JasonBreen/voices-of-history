@@ -1,9 +1,9 @@
 """Definitions verified against the installed local overhaul sources."""
 
-MD_OEM = "millennium_dawn_oem"
+MD = "millennium_dawn"
 CWIC_DEV = "cwic_dev"
 TFR = "the_fire_rises"
-RESTRICTED_PROFILES = (MD_OEM, CWIC_DEV, TFR)
+RESTRICTED_PROFILES = (MD, CWIC_DEV, TFR)
 
 TFR_REACTION_STYLE = """TFR REACTION STYLE: dramatic, in character and consistent with the
 active campaign. Treat this mod's political extremity and alternate-history premises as
@@ -90,7 +90,7 @@ MD_IDEOLOGY = {
     "1": "Salafist Outlook", "2": "Emerging Outlook", "3": "Western Outlook",
     "4": "Non-Aligned Outlook", "5": "Nationalist Outlook", "0": "Unknown",
 }
-IDEOLOGY_LABELS = {MD_OEM: MD_IDEOLOGY, CWIC_DEV: CWIC_IDEOLOGY, TFR: TFR_IDEOLOGY}
+IDEOLOGY_LABELS = {MD: MD_IDEOLOGY, CWIC_DEV: CWIC_IDEOLOGY, TFR: TFR_IDEOLOGY}
 
 MD_EQUIPMENT = {
     "infantry_weapons_type", "artillery_equipment", "AA_Equipment",
@@ -114,7 +114,7 @@ MD_ACTIONS = {
     "non_aggression_pact", "guarantee", "military_access", "reject", "dynamic_event",
 }
 
-MD_INSTRUCTIONS = """ACTIVE GAME: Millennium Dawn OEM, a modern-day HOI4 conversion.
+MD_INSTRUCTIONS = """ACTIVE GAME: Millennium Dawn, a modern-day HOI4 conversion.
 Use the date, leader, countries and states exported by this campaign. Do not assume a
 1936 world, Soviet Union, vanilla borders, or historical leaders when the live data differs.
 The engine ideology groups have DIFFERENT meanings here: democratic=Western Outlook,
@@ -131,7 +131,7 @@ Never substitute raw_console/raw_effect or an event number for an unavailable ac
 In dry-run mode, planned effects are previews, not changes that have happened in the game.
 """
 
-MD_CATALOG = """MILLENNIUM DAWN OEM ACTION CATALOG. Use ONLY these actions:
+MD_CATALOG = """MILLENNIUM DAWN ACTION CATALOG. Use ONLY these actions:
 - add_political_power {target, amount}
 - add_stability {target, amount} (fraction, e.g. 0.01 = 1%)
 - add_war_support {target, amount} (fraction)
@@ -246,7 +246,7 @@ Targets are actual live country tags or ROOT. All numbers must be numeric.
 
 
 def model_instructions(cfg):
-    instructions = {MD_OEM: MD_INSTRUCTIONS, CWIC_DEV: CWIC_INSTRUCTIONS,
+    instructions = {MD: MD_INSTRUCTIONS, CWIC_DEV: CWIC_INSTRUCTIONS,
                     TFR: TFR_INSTRUCTIONS}.get(cfg.get("game_profile"), "")
     if cfg.get("injection", {}).get("dry_run"):
         instructions += ("\nEXECUTION MODE: DRY RUN. Every emitted action is a preview. "

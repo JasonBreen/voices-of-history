@@ -25,8 +25,8 @@ class ProfileCharacterizationTests(unittest.TestCase):
             userdir = root / "userdir"
             userdir.mkdir()
             (root / "middleware").mkdir()
-            (userdir / "dlc_load.json").write_text(json.dumps({"enabled_mods": ["mod/MD_OEM_LOCAL.mod", ENTRY]}))
-            (root / "middleware/config-unified-md-oem.json").write_text(json.dumps({"game_profile": "the_fire_rises"}))
+            (userdir / "dlc_load.json").write_text(json.dumps({"enabled_mods": ["mod/MD_LOCAL_STANDARD.mod", ENTRY]}))
+            (root / "middleware/config-unified-md.json").write_text(json.dumps({"game_profile": "the_fire_rises"}))
             with patch.object(bridge, "ROOT", root), patch.object(bridge, "USERDIR", userdir):
                 with self.assertRaisesRegex(RuntimeError, "disagrees"):
                     bridge.main(["--check"])
@@ -62,9 +62,12 @@ create_country_leader = {
             self.assertEqual(characterization_source([ENTRY], userdir, game), game.resolve())
             for base, profile in BASES.items():
                 source = userdir / profile
-                (source / "history/countries").mkdir(parents=True)
+                (source / "history/countries").mkdir(parents=True, exist_ok=True)
                 descriptor = userdir / base
-                descriptor.write_text(f'path="{source.as_posix()}"\n')
+                metadata = 'name="Millennium Dawn: A Modern Day Mod"\nremote_file_id="2777392649"\n' if profile == "millennium_dawn" else ""
+                descriptor.write_text(metadata + f'path="{source.as_posix()}"\n')
+                if metadata:
+                    (source / "descriptor.mod").write_text(metadata)
                 before = descriptor.read_bytes()
                 self.assertEqual(characterization_source([base, ENTRY], userdir, game), source.resolve())
                 self.assertEqual(descriptor.read_bytes(), before)
@@ -75,7 +78,7 @@ create_country_leader = {
         with tempfile.TemporaryDirectory() as temp:
             userdir = Path(temp)
             (userdir / "mod").mkdir()
-            base = "mod/MD_OEM_LOCAL.mod"
+            base = "mod/MD_LOCAL_STANDARD.mod"
             path = userdir / base
             for text in ('name="No path"', 'path="missing"', 'path="one"\npath="two"'):
                 path.write_text(text)
@@ -107,13 +110,13 @@ create_country_leader = {
  traits = { }
 }
 ''')
-            lore = ProfileLore(root, "millennium_dawn_oem")
+            lore = ProfileLore(root, "millennium_dawn")
             refs = lore.references({"tag": "SOV", "leader": "Test Leader"}, {}, "decree")
             self.assertEqual(refs, [])
             self.assertIn("no unambiguous authored characterization", lore.briefing({"tag": "SOV", "leader": "Test Leader"}, {}, "decree"))
 
     def test_factory_keeps_tfr_lore_separate_and_uses_launcher_selected_source(self):
-        for profile in ("vanilla", "millennium_dawn_oem", "cwic_dev"):
+        for profile in ("vanilla", "millennium_dawn", "cwic_dev"):
             lore = make_lore({"game_profile": profile, "characterization": {"source": "selected"}, "tfr": {"source": "stale"}})
             self.assertIsInstance(lore, ProfileLore)
             self.assertEqual(str(lore.source), "selected")
@@ -123,7 +126,7 @@ create_country_leader = {
         self.assertEqual(str(lore.source), "selected")
 
     def test_voice_rules_distinguish_mod_setting_without_speaker_stereotypes(self):
-        expected = {"millennium_dawn_oem": "MILLENNIUM DAWN CHARACTER VOICE",
+        expected = {"millennium_dawn": "MILLENNIUM DAWN CHARACTER VOICE",
                     "cwic_dev": "COLD WAR IRON CURTAIN CHARACTER VOICE",
                     "vanilla": "VANILLA CHARACTER VOICE", "the_fire_rises": "TFR CHARACTER VOICE"}
         for profile, label in expected.items():

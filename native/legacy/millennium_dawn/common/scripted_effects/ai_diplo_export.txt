@@ -104,7 +104,7 @@ ai_diplo_export_state = {
 	if = { limit = { is_subject = yes } set_temp_variable = { aid_issubject = 1 } }
 
 	# --- Scrittura della riga di stato nel game.log ---
-	log = "AIDIPLO_STATE|profile=millennium_dawn_oem|date=[GetDateText]|day=[?aidiplo_day|0]|gid=[?aidiplo_gameid|0]|tag=[This.GetTag]|name=[This.GetName]|leader=[This.GetLeader]|ideo=[?aid_ideo|0]|stab=[?aid_stab|0]|ws=[?aid_ws|0]|pp=[?aid_pp|0]|civ=[?aid_civ|0]|mil=[?aid_mil|0]|nav=[?aid_nav|0]|div=[?aid_div|0]|mp=[?aid_mp|0]|wt=[?aid_wt|0]|war=[?aid_war|0]|faction=[?aid_faction|0]|facleader=[?aid_facleader|0]|states=[?aid_majors|0]|subjects=[?aid_subjects|0]|is_subject=[?aid_issubject|0]|cores_lost=[?aid_cores_lost|0]|enemy_land=[?aid_enemy_land|0]|cap=[?aid_cap|0]|enemies=[?aid_enemies|0]|allies=[?aid_allies|0]"
+	log = "AIDIPLO_STATE|profile=millennium_dawn|date=[GetDateText]|day=[?aidiplo_day|0]|gid=[?aidiplo_gameid|0]|tag=[This.GetTag]|name=[This.GetName]|leader=[This.GetLeader]|ideo=[?aid_ideo|0]|stab=[?aid_stab|0]|ws=[?aid_ws|0]|pp=[?aid_pp|0]|civ=[?aid_civ|0]|mil=[?aid_mil|0]|nav=[?aid_nav|0]|div=[?aid_div|0]|mp=[?aid_mp|0]|wt=[?aid_wt|0]|war=[?aid_war|0]|faction=[?aid_faction|0]|facleader=[?aid_facleader|0]|states=[?aid_majors|0]|subjects=[?aid_subjects|0]|is_subject=[?aid_issubject|0]|cores_lost=[?aid_cores_lost|0]|enemy_land=[?aid_enemy_land|0]|cap=[?aid_cap|0]|enemies=[?aid_enemies|0]|allies=[?aid_allies|0]"
 }
 
 # ============================================================
@@ -202,7 +202,7 @@ ai_diplo_log_country = {
 	set_temp_variable = { n_subjyou = 0 }
 	if = { limit = { is_subject_of = event_target:aid_self } set_temp_variable = { n_subjyou = 1 } }
 
-	log = "AIDIPLO_NATION|profile=millennium_dawn_oem|tag=[This.GetTag]|name=[This.GetName]|leader=[This.GetLeader]|date=[GetDateText]|ideo=[?n_ideo|0]|stab=[?n_stab|0]|ws=[?n_ws|0]|civ=[?n_civ|0]|mil=[?n_mil|0]|div=[?n_div|0]|states=[?n_states|0]|war=[?n_war|0]|waryou=[?n_waryou|0]|cap=[?n_cap|0]|fac=[?n_fac|0]|facyou=[?n_facyou|0]|maj=[?n_maj|0]|nb=[?n_nb|0]|subj=[?n_subj|0]|subjyou=[?n_subjyou|0]"
+	log = "AIDIPLO_NATION|profile=millennium_dawn|tag=[This.GetTag]|name=[This.GetName]|leader=[This.GetLeader]|date=[GetDateText]|ideo=[?n_ideo|0]|stab=[?n_stab|0]|ws=[?n_ws|0]|civ=[?n_civ|0]|mil=[?n_mil|0]|div=[?n_div|0]|states=[?n_states|0]|war=[?n_war|0]|waryou=[?n_waryou|0]|cap=[?n_cap|0]|fac=[?n_fac|0]|facyou=[?n_facyou|0]|maj=[?n_maj|0]|nb=[?n_nb|0]|subj=[?n_subj|0]|subjyou=[?n_subjyou|0]"
 }
 
 # ============================================================

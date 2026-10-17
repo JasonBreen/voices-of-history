@@ -2,12 +2,13 @@
 
 No focus/event prose is collected; source definitions are never evaluated as script.
 """
+from pathlib import Path
 import json
 import re
 
 from tfr_lore import TFRLore, LOC, TOKENS, character_blocks, clean
 
-LABELS = {"millennium_dawn_oem": "MILLENNIUM DAWN", "cwic_dev": "CWIC", "vanilla": "VANILLA"}
+LABELS = {"millennium_dawn": "MILLENNIUM DAWN", "cwic_dev": "CWIC", "vanilla": "VANILLA"}
 
 
 def creation_blocks(text):
@@ -113,6 +114,9 @@ class ProfileLore(TFRLore):
 def make_lore(cfg):
     profile = cfg.get("game_profile", "vanilla")
     source = cfg.get("characterization", {}).get("source", "")
+    if profile == "millennium_dawn" and source and (Path(source) / "descriptor.mod").is_file():
+        from md_compat import require_regular_md
+        require_regular_md(Path(source) / "descriptor.mod")
     if profile == "the_fire_rises":
         return TFRLore(source or cfg.get("tfr", {}).get("source", ""))
     return ProfileLore(source, profile) if profile in LABELS and source else None

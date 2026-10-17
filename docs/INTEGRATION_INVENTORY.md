@@ -14,7 +14,7 @@ are subsumed by the later modified source. Neither source/installed copy was edi
 | Verified local code | Contribution |
 | --- | --- |
 | `main`, `game_state`, `memory`, `injector`, `functions`, `overlay`, `prompts` | Shared extensions and fixes with baseline gates, current representative/country UI, history isolation, plan/reload handling, dry run |
-| `profiles`, local MD/CWIC/TFR mod copies | Explicit ideology/equipment/action adapters; native differences under `native/legacy` over the original mod |
+| `profiles`, adapted MD/CWIC/TFR integration | Explicit ideology/equipment/action adapters; native differences under `native/legacy` over the original mod |
 | `leader_voice`, `profile_lore`, `tfr_lore` | Opt-in dialogue style and bounded local characterization; no bundled overhaul text |
 | `unified_mod`, `native/shared`, `native/variants` | Separate generated owned installation; original native mod reused for unchanged files/assets |
 | `safe_actions`, `unified_runtime` | Typed actions, context bounds, engine-result journal, no-action path and no automatic uncertain-delivery retry |
@@ -43,3 +43,17 @@ implemented pilot chooses bounded temporary production emphasis for three AI
 majors. These limits are documented rather than described as missing implemented
 features. Native-game acceptance is pending for this contribution; automated tests
 and historical local observations are separate evidence.
+
+## Regular Millennium Dawn scope verification
+
+The MD contribution targets regular `MillenniumDawn/Millennium-Dawn`, not OEM.
+The profile, configuration/native folder names, exported tags, memory/settings
+namespaces, descriptor selection, generated dependencies and source references
+were revised for that distribution. Regular Workshop metadata and developer
+descriptors are checked; OEM metadata/source cannot be substituted by an alias.
+
+The eight equipment archetypes, five outlook mappings and three AI template roles
+were independently verified against both the untouched regular checkout and
+authoritative upstream. Shared mappings were retained only after those checks.
+See [regular-MD evidence and limitations](MILLENNIUM_DAWN_COMPATIBILITY.md) and
+`tools/verify_md_source.py`. Non-MD generated native outputs remain unchanged.

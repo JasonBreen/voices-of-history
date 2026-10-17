@@ -16,7 +16,7 @@ Everything is driven from one window: **`VoicesOfHistory.exe`**.
 
 ---
 
-> Optional source extensions add MD/CWIC/TFR profiles, bounded leader references,
+> Optional source extensions add regular Millennium Dawn, CWIC and TFR profiles, bounded leader references,
 > guarded dialogue/actions, ChatGPT plan or compatible providers, and a disabled-by-default
 > strategic pilot. The original Player2 configuration and base-game mod remain the default.
 > See [configuration, privacy, compatibility and tests](docs/EXTENSIONS.md).
