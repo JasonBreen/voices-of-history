@@ -3,7 +3,7 @@
 """
 VOICES OF HISTORY - Launcher
 Un solo launcher grafico che sostituisce i vecchi .bat. Tre azioni:
-  - Start Middleware : avvia la chat IA (trova Python, installa le dipendenze se mancano, lancia main.py)
+  - Start Middleware : avvia la chat IA (impacchettata nell'exe: nessun Python da installare)
   - Install / Update Mod : copia la mod nella cartella di Hearts of Iron IV e la registra per il launcher
   - Repair Launcher : svuota la cache del launcher Paradox (se mostra "path invalid")
 Solo libreria standard di Python (tkinter/os/sys/subprocess/shutil): si impacchetta facilmente in .exe.
@@ -116,11 +116,34 @@ class Launcher:
 
     # ---- 1) START MIDDLEWARE ----
     def start_middleware(self):
+        # Exe autosufficiente: il middleware è impacchettato dentro l'exe.
+        # Riavviamo lo stesso exe in modalità "--middleware": nessun Python
+        # di sistema e nessuna dipendenza da installare.
+        if getattr(sys, "frozen", False):
+            try:
+                # Avviamo il middleware come processo COMPLETAMENTE staccato: niente eredità di
+                # handle (close_fds) e gruppo/processo separato. Cosi' il figlio NON trattiene la
+                # cartella temporanea _MEIxxxx del launcher e alla chiusura non esce piu' il
+                # popup "Failed to remove temporary directory".
+                flags = 0
+                if os.name == "nt":
+                    DETACHED_PROCESS = 0x00000008
+                    CREATE_NEW_PROCESS_GROUP = 0x00000200
+                    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+                subprocess.Popen([sys.executable, "--middleware"], cwd=app_dir(),
+                                 close_fds=True, creationflags=flags)
+                self.log("Middleware started. Keep its window open while you play. "
+                         "(Press ENTER in the chat box to send.)", "ok")
+            except Exception as e:
+                self.log(f"[ERROR] Could not start the middleware: {e}", "err")
+            return
+
+        # --- Modalità sviluppo (eseguito dai sorgenti con Python) ---
         mw = os.path.join(app_dir(), "middleware")
         if not os.path.isdir(mw):
             self.log("[ERROR] 'middleware' folder not found next to the launcher.", "err")
             return
-        py = find_python()
+        py = sys.executable or find_python()
         if not py:
             self.log("[ERROR] Python not found. Install Python 3.10+ from python.org", "err")
             self.log("        (tick 'Add to PATH' and keep 'tcl/tk and IDLE' checked), then retry.", "muted")
@@ -217,6 +240,43 @@ class Launcher:
         self.log(f"[OK] Launcher cache cleared ({deleted} file(s)). Reopen the launcher and re-enable the mod.",
                  "ok")
 
+    # ---- LINGUA DELL'IA ----
+    def _lang_paths(self):
+        """Dove il middleware legge la lingua: language.txt accanto all'exe (build) e,
+        in sviluppo, anche dentro middleware/. Scriviamo in entrambi per sicurezza."""
+        paths = [os.path.join(app_dir(), "language.txt")]
+        mw = os.path.join(app_dir(), "middleware")
+        if os.path.isdir(mw):
+            paths.append(os.path.join(mw, "language.txt"))
+        return paths
+
+    def _read_lang(self):
+        for p in self._lang_paths():
+            try:
+                if os.path.isfile(p):
+                    v = open(p, encoding="utf-8").read().strip()
+                    if v:
+                        return v
+            except Exception:
+                pass
+        return ""
+
+    def set_language(self):
+        lang = (self.lang_var.get() or "").strip()
+        if not lang:
+            self.log("Type a language first (e.g. English, Italiano, Deutsch).", "muted")
+            return
+        ok = False
+        for p in self._lang_paths():
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(lang)
+                ok = True
+            except Exception as e:
+                self.log(f"[WARNING] Could not write {os.path.basename(p)}: {e}", "err")
+        if ok:
+            self.log(f"[OK] AI language set to '{lang}'. Restart the middleware to apply.", "ok")
+
     # ============================================================
     #  UI
     # ============================================================
@@ -268,6 +328,26 @@ class Launcher:
                    "its cache so it rebuilds from the mod. Close the launcher first.",
                    self.repair_launcher)
 
+        # ---- impostazione lingua dell'IA ----
+        langrow = tk.Frame(body, bg=C_CARD, highlightbackground="#2f3843", highlightthickness=1)
+        langrow.pack(fill="x", pady=7)
+        tk.Label(langrow, text="  🌐   AI language", bg=C_CARD, fg=C_GOLD,
+                 font=("Georgia", 13, "bold"), anchor="w").pack(fill="x", padx=14, pady=(8, 0))
+        tk.Label(langrow, text="The language the AI speaks in. Type it (e.g. English, Italiano, "
+                 "Deutsch) and Save, then (re)start the middleware.", bg=C_CARD, fg=C_MUTED,
+                 font=("Segoe UI", 9), wraplength=560, justify="left", anchor="w").pack(
+                 fill="x", padx=18, pady=(0, 6))
+        inrow = tk.Frame(langrow, bg=C_CARD)
+        inrow.pack(fill="x", padx=18, pady=(0, 10))
+        self.lang_var = tk.StringVar(value=self._read_lang())
+        ent = tk.Entry(inrow, textvariable=self.lang_var, bg=C_PANEL, fg=C_TEXT,
+                       insertbackground=C_TEXT, relief="flat", font=("Segoe UI", 11))
+        ent.pack(side="left", fill="x", expand=True, ipady=4)
+        ent.bind("<Return>", lambda e: (self.set_language(), "break")[1])
+        tk.Button(inrow, text="Save", command=self.set_language, bg=C_CARD, fg=C_GOLD,
+                  font=("Segoe UI", 10, "bold"), relief="flat", activebackground="#2b333c",
+                  activeforeground=C_GOLD, cursor="hand2", padx=16, bd=0).pack(side="right", padx=(8, 0))
+
         tk.Label(body, text="Activity", bg=C_BG, fg=C_GOLD,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 2))
         logbox = tk.Frame(body, bg=C_PANEL, highlightbackground="#2f3843", highlightthickness=1)
@@ -288,6 +368,25 @@ class Launcher:
                  "open HoI4 in -debug and enable the mod.", "muted")
 
 
+def _run_middleware():
+    """Esegue il middleware (chat IA). Quando l'exe è 'congelato' (PyInstaller),
+    i moduli del middleware e le dipendenze sono già impacchettati dentro l'exe,
+    quindi NON serve alcun Python installato dall'utente. Dai sorgenti, invece,
+    si esegue middleware/main.py con il Python corrente."""
+    if not getattr(sys, "frozen", False):
+        mw = os.path.join(os.path.dirname(os.path.abspath(__file__)), "middleware")
+        if os.path.isdir(mw):
+            if mw not in sys.path:
+                sys.path.insert(0, mw)
+            try:
+                os.chdir(mw)
+            except Exception:
+                pass
+    sys.argv = [sys.argv[0], *[arg for arg in sys.argv[1:] if arg != "--middleware"]]
+    import main as _middleware_main   # impacchettato via build_launcher.py (--paths middleware)
+    _middleware_main.main()
+
+
 def main():
     root = tk.Tk()
     Launcher(root)
@@ -295,4 +394,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--middleware" in sys.argv:
+        _run_middleware()
+    else:
+        main()

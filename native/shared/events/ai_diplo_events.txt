@@ -1,0 +1,251 @@
+add_namespace = aidiplo
+
+# ============================================================
+#  EVENTO DINAMICO GENERICO
+#  Il testo (titolo/descrizione/opzioni) e' preso da chiavi di
+#  localizzazione che il middleware RISCRIVE a runtime, poi lancia
+#  "reload localisation" e infine "event aidiplo.1" dalla console.
+#  Cosi' l'IA puo' generare eventi narrativi al volo.
+# ============================================================
+country_event = {
+	id = aidiplo.1
+	title = aidiplo.1.t
+	desc = aidiplo.1.d
+	picture = GFX_report_event_german_reichstag_gathering
+	is_triggered_only = yes
+
+	option = {
+		name = aidiplo.1.a
+		# Gli effetti meccanici sono gia' stati applicati dal middleware
+		# via console. Qui restano solo conferme narrative.
+		ai_chance = { factor = 1 }
+	}
+	option = {
+		name = aidiplo.1.b
+		ai_chance = { factor = 0 }
+	}
+}
+
+# ============================================================
+#  EVENTO "AZIONE" stile focus-tree (fa scoppiare la guerra, ecc.)
+#  Gli effetti dentro le opzioni sono COMPILATI AL CARICAMENTO della mod,
+#  quindi declare_war_on NON da' "errors compiling" (a differenza di
+#  eval_effect a runtime). Il middleware, prima di lanciarlo, salva la
+#  nazione bersaglio come event_target globale 'aidiplo_tgt' e imposta la
+#  variabile 'aidiplo_act' (1=guerra, 2=annessione, 3=fantoccio).
+#  Viene lanciato alla nazione che COMPIE l'azione (ROOT = chi agisce).
+# ============================================================
+country_event = {
+	id = aidiplo.2
+	title = aidiplo.2.t
+	desc = aidiplo.2.d
+	picture = GFX_report_event_generic_army
+	is_triggered_only = yes
+
+	option = {
+		name = aidiplo.2.a   # conferma -> esegue l'azione (ROOT = chi agisce)
+		if = {
+			limit = { check_variable = { aidiplo_act = 1 } }   # dichiara guerra
+			declare_war_on = { target = event_target:aidiplo_tgt type = annex_everything }
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 2 } }   # annetti
+			annex_country = { target = event_target:aidiplo_tgt transfer_troops = yes }
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 3 } }   # rendi fantoccio
+			puppet = event_target:aidiplo_tgt
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 4 } }   # patto di non aggressione
+			diplomatic_relation = { country = event_target:aidiplo_tgt relation = non_aggression_pact active = yes }
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 5 } }   # alleanza / fazione
+			if = { limit = { is_in_faction = no } create_faction = AIDIPLO_NEW_FACTION }
+			add_to_faction = event_target:aidiplo_tgt
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 6 } }   # garanzia
+			diplomatic_relation = { country = event_target:aidiplo_tgt relation = guarantee active = yes }
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 7 } }   # accesso militare
+			diplomatic_relation = { country = event_target:aidiplo_tgt relation = military_access active = yes }
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 8 } }   # fine vassallaggio (ROOT = overlord)
+			end_puppet = event_target:aidiplo_tgt
+		}
+		if = {
+			limit = { check_variable = { aidiplo_act = 9 } }   # embargo commerciale + calo opinione
+			send_embargo = event_target:aidiplo_tgt
+			event_target:aidiplo_tgt = { add_opinion_modifier = { target = ROOT modifier = ai_diplo_distrust } }
+		}
+	}
+	option = {
+		name = aidiplo.2.b   # ripensaci
+	}
+}
+
+# ============================================================
+#  EVENTO DI RIFIUTO (anacronismo / fallimento tecnologico)
+#  Lanciato dal middleware quando il giocatore chiede l'impossibile.
+#  Testo dinamico via chiave aidiplo.10.d (riscritta a runtime).
+# ============================================================
+country_event = {
+	id = aidiplo.10
+	title = aidiplo.10.t
+	desc = aidiplo.10.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = {
+		name = aidiplo.10.a
+	}
+}
+
+# ============================================================
+#  COMPLETAMENTO PIANI A TEMPO (6 "slot" concorrenti)
+#  Il middleware programma questi eventi con i GIORNI reali di HoI4:
+#    eval_effect <TAG> = { country_event = { id = aidiplo.30 days = D } }
+#  Quando scadono (dopo D giorni di gioco) loggano il completamento; il
+#  middleware applica gli effetti del piano e mostra la narrazione finale.
+# ============================================================
+country_event = { id = aidiplo.30 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=0" } }
+country_event = { id = aidiplo.31 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=1" } }
+country_event = { id = aidiplo.32 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=2" } }
+country_event = { id = aidiplo.33 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=3" } }
+country_event = { id = aidiplo.34 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=4" } }
+country_event = { id = aidiplo.35 hidden = yes is_triggered_only = yes immediate = { log = "AIDIPLO_PLAN_DONE|slot=5" } }
+
+# ============================================================
+#  EVENTO DECISIONE INTERMEDIA (diramazioni dei piani importanti)
+#  Testo e opzioni riscritti dal middleware. Ogni opzione LOGGA la scelta,
+#  il middleware applica la conseguenza relativa.
+# ============================================================
+country_event = {
+	id = aidiplo.46
+	title = aidiplo.46.t
+	desc = aidiplo.46.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.46.a log = "AIDIPLO_CHOICE|c=1" }
+	option = { name = aidiplo.46.b log = "AIDIPLO_CHOICE|c=2" }
+	# 3a opzione: il giocatore prende in mano la situazione e SCRIVE cosa fa
+	# (si apre il canale evento del middleware per questo bivio).
+	option = { name = aidiplo.46.c log = "AIDIPLO_CHOICE|c=3" }
+}
+
+# ============================================================
+#  BIVI PER-SLOT (aidiplo.40-45): un evento DEDICATO per ciascuno dei 6 slot di piano.
+#  PERCHE': con piu' piani attivi insieme, l'evento condiviso aidiplo.46 creava caos:
+#  le chiavi di testo venivano sovrascritte dal bivio successivo e la scelta (c=N,
+#  senza slot) veniva attribuita al piano SBAGLIATO -> bonus persi o scambiati.
+#  Qui ogni slot ha le SUE chiavi di localizzazione e logga slot=N insieme alla
+#  scelta: il middleware instrada la risposta al piano giusto, sempre, anche con
+#  sei bivi aperti contemporaneamente. aidiplo.46 resta per la guerra civile.
+# ============================================================
+country_event = {
+	id = aidiplo.40
+	title = aidiplo.40.t
+	desc = aidiplo.40.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.40.a log = "AIDIPLO_CHOICE|slot=0|c=1" }
+	option = { name = aidiplo.40.b log = "AIDIPLO_CHOICE|slot=0|c=2" }
+	option = { name = aidiplo.40.c log = "AIDIPLO_CHOICE|slot=0|c=3" }
+}
+country_event = {
+	id = aidiplo.41
+	title = aidiplo.41.t
+	desc = aidiplo.41.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.41.a log = "AIDIPLO_CHOICE|slot=1|c=1" }
+	option = { name = aidiplo.41.b log = "AIDIPLO_CHOICE|slot=1|c=2" }
+	option = { name = aidiplo.41.c log = "AIDIPLO_CHOICE|slot=1|c=3" }
+}
+country_event = {
+	id = aidiplo.42
+	title = aidiplo.42.t
+	desc = aidiplo.42.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.42.a log = "AIDIPLO_CHOICE|slot=2|c=1" }
+	option = { name = aidiplo.42.b log = "AIDIPLO_CHOICE|slot=2|c=2" }
+	option = { name = aidiplo.42.c log = "AIDIPLO_CHOICE|slot=2|c=3" }
+}
+country_event = {
+	id = aidiplo.43
+	title = aidiplo.43.t
+	desc = aidiplo.43.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.43.a log = "AIDIPLO_CHOICE|slot=3|c=1" }
+	option = { name = aidiplo.43.b log = "AIDIPLO_CHOICE|slot=3|c=2" }
+	option = { name = aidiplo.43.c log = "AIDIPLO_CHOICE|slot=3|c=3" }
+}
+country_event = {
+	id = aidiplo.44
+	title = aidiplo.44.t
+	desc = aidiplo.44.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.44.a log = "AIDIPLO_CHOICE|slot=4|c=1" }
+	option = { name = aidiplo.44.b log = "AIDIPLO_CHOICE|slot=4|c=2" }
+	option = { name = aidiplo.44.c log = "AIDIPLO_CHOICE|slot=4|c=3" }
+}
+country_event = {
+	id = aidiplo.45
+	title = aidiplo.45.t
+	desc = aidiplo.45.d
+	picture = GFX_report_event_generic_factory
+	is_triggered_only = yes
+
+	option = { name = aidiplo.45.a log = "AIDIPLO_CHOICE|slot=5|c=1" }
+	option = { name = aidiplo.45.b log = "AIDIPLO_CHOICE|slot=5|c=2" }
+	option = { name = aidiplo.45.c log = "AIDIPLO_CHOICE|slot=5|c=3" }
+}
+
+# ============================================================
+#  PROGRESSO DEI RIVALI (bilanciamento anti-cheat)
+#  Evento nascosto e ricorrente: ogni 90 giorni le grandi potenze IA
+#  ricevono un progresso MODESTO e calibrato (industria + potere politico,
+#  con sfumatura ideologica), cosi' il mondo resta competitivo anche se il
+#  giocatore spinge molte riforme. Si ri-lancia da solo.
+# ============================================================
+# TFR owns rival progression and balance. Keep this legacy event as a no-op
+# so an already-queued event in an existing test save remains harmless.
+country_event = {
+	id = aidiplo.50
+	hidden = yes
+	is_triggered_only = yes
+	immediate = { }
+}
+
+# ============================================================
+#  GIORNALE TRIMESTRALE (timer): ogni ~90 giorni logga AIDIPLO_NEWS,
+#  il middleware genera l'editoriale giornalistico e lo mostra.
+# ============================================================
+country_event = {
+	id = aidiplo.51
+	hidden = yes
+	is_triggered_only = yes
+	immediate = {
+		# PRIMA di lanciare il giornale ri-esportiamo il mondo COMPLETO (tutte le ~150
+		# nazioni), non solo quelle rilevanti del contesto giornaliero: l'editoriale passa
+		# in rassegna il mondo intero, quindi l'IA deve avere lo stato AGGIORNATO di TUTTI.
+		# Il middleware legge prima queste righe (AIDIPLO_NATION) e poi AIDIPLO_NEWS, quindi
+		# quando genera l'editoriale il contesto e' gia' completo e fresco (no invenzioni).
+		ai_diplo_export_world = yes
+		log = "AIDIPLO_NEWS|tag=[This.GetTag]"
+		country_event = { id = aidiplo.51 days = 90 }
+	}
+}

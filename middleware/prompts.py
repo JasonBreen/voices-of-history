@@ -7,6 +7,10 @@ Builds the System Prompts for the channels:
 - LEADERLIFE : narrated daily life of the player's own head of state
 """
 from functions import catalog_text
+import functions
+import re
+from profiles import TFR, TFR_REACTION_MODES
+from leader_voice import leader_voice_rules
 
 # ---- DIFFICULTY / REALISM MODES (set at middleware startup, changeable) ----
 DIFFICULTY_MODES = {
@@ -36,7 +40,7 @@ def set_difficulty(mode):
         _CURRENT_DIFFICULTY = mode
 
 
-def difficulty_block():
+def _baseline_difficulty_block():
     return DIFFICULTY_MODES.get(_CURRENT_DIFFICULTY, DIFFICULTY_MODES["realistic"])
 
 # The base mod is in English, but the AI must reply in the PLAYER'S language.
@@ -438,7 +442,7 @@ BEHAVIOR_RULES = (ROLEPLAY_RULE + "\n" + GROUNDING_RULE + "\n" + ACTION_SELECTIO
                   + OUTCOMES_RULE + "\n" + POLITICAL_POWER_RULE + "\n" + BEHAVIOR_RULES)
 
 
-def build_leader_system(target_tag, target_name, leader_name, player_name):
+def _baseline_leader_system(target_tag, target_name, leader_name, player_name):
     return f"""\
 You are {leader_name}, leader/representative of {target_name} ({target_tag}) in the world
 of Hearts of Iron IV (World War II, alternate history). You are speaking diplomatically
@@ -761,3 +765,91 @@ groups). Strategy-focused, concise, no personal first-person RP scene.
 {catalog_text()}
 
 {CROSSROAD_OUTPUT}"""
+
+
+_ENHANCED_PERSONALITIES = False
+
+def configure_features(cfg):
+    global _ENHANCED_PERSONALITIES
+    _ENHANCED_PERSONALITIES = cfg.get("behavior", {}).get("enhanced_personalities", False)
+
+
+def current_difficulty():
+    return _CURRENT_DIFFICULTY
+
+
+def difficulty_block():
+    if functions.GAME_PROFILE == TFR:
+        return TFR_REACTION_MODES.get(_CURRENT_DIFFICULTY, TFR_REACTION_MODES["plausible"])
+    return DIFFICULTY_MODES.get(_CURRENT_DIFFICULTY, DIFFICULTY_MODES["realistic"])
+
+
+def refresh_realism(system_prompt):
+    """Apply a settings change to the next reply even when its channel is already open."""
+    return re.sub(r"(?m)^REALISM MODE = [^\n]*$", lambda _: difficulty_block(), system_prompt)
+
+
+def realism_mode_options():
+    if functions.GAME_PROFILE == TFR:
+        return [
+            ("Setting grounded", "realistic", "TFR lore is accepted. New developments need strong motives, resources and buildup; characters can bargain or refuse."),
+            ("TFR style", "plausible", "Dramatic, in-character alternate history. Bold developments fit the lore and campaign, with political friction and consequences."),
+            ("Sandbox", "sandbox", "Explore your own deviations from TFR lore. Character voices and campaign facts stay distinct; unsupported game mechanics remain unavailable."),
+        ]
+    return [
+        ("Realistic", "realistic", "Strict historical plausibility. The AI rejects anachronisms and scenarios that could not credibly happen."),
+        ("Plausible", "plausible", "Alternate history allowed if grounded and consistent. Bold or secret schemes are accepted if you build them up."),
+        ("Sandbox", "sandbox", "Anything goes. The AI embraces any premise, even fantastical, and almost never refuses for realism."),
+    ]
+
+
+def _enhanced_leader_system(target_tag, target_name, leader_name, player_name, player_tag="ROOT"):
+    return f"""\
+You are {leader_name}, leader/representative of {target_name} ({target_tag}) in the world
+of Hearts of Iron IV in the active campaign. You are speaking diplomatically
+with the leader of {player_name} ({player_tag}). Follow the exported date and government.
+
+Play {leader_name} with their personality, rhetoric and historical goals. Defend the
+interests of {target_name}. You may negotiate lend-lease, alliances, secret pacts,
+territorial cessions, coordinated declarations of war, etc.
+
+Actions are proposals for the configured execution mode. In DRY RUN they are previews
+and cannot change the game. Never claim a treaty or transfer was applied without game
+confirmation. Act as {target_tag}; for equipment sent by your country, set sender to
+{target_tag} and receiver to the recipient's tag. Use only the active profile's catalog.
+
+VERY IMPORTANT about TAGS: this nation is {target_tag}; the player is ROOT. In ALL actions
+ALWAYS use the 3-letter tags (e.g. {target_tag}, ROOT), NEVER the nation's full name. For
+a war/pact/cession between you and the player the two targets are {target_tag} and ROOT.
+
+{language_rule()}
+
+{difficulty_block()}
+
+{BEHAVIOR_RULES}
+
+{catalog_text()}
+
+FOREIGN DIPLOMACY RULES (apply specifically to this channel):
+- You control only {target_name} ({target_tag}). The human controls {player_name}
+  ({player_tag}); ROOT refers to that human player's country, never to yours.
+- Defend your country's interests. You may negotiate, request concessions or decline.
+  The general staff's order-following rules do not make you the player's subordinate.
+- Speak as the exported representative. A current exported leader supersedes older
+  chat history or historical expectations. Do not use knowledge from after the campaign date.
+- Pure discussion, greetings, questions, proposals and unfinished negotiations must
+  return an empty actions array. Do not reward ordinary conversation with national stats.
+- Do not decide, speak or agree on behalf of the human player. Bilateral agreements
+  require both sides' explicit agreement; unsupported mechanics remain narrative proposals.
+- Prefer a short in-character reply and a clear next negotiating point. If asked about
+  identity or execution mode, state those accurately from the supplied context.
+
+{leader_voice_rules(functions.GAME_PROFILE)}
+
+{OUTPUT_CONTRACT}"""
+
+
+def build_leader_system(target_tag, target_name, leader_name, player_name, player_tag="ROOT"):
+    if _ENHANCED_PERSONALITIES or functions.GAME_PROFILE != "vanilla":
+        return _enhanced_leader_system(target_tag, target_name, leader_name, player_name, player_tag)
+    return _baseline_leader_system(target_tag, target_name, leader_name, player_name)

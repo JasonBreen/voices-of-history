@@ -10,6 +10,7 @@ Ciclo a tre vie:
   mostriamo il messaggio e ESEGUIAMO le azioni nel gioco via console.
 """
 import os
+import argparse
 import sys
 import re
 import json
@@ -20,10 +21,16 @@ import time
 import game_state as gs
 import functions
 from llm_client import LLMClient
+from providers import configured_client
 from memory import Memory
 from injector import Injector
 from overlay import ChatOverlay
 import prompts
+from profiles import TFR, request_instructions
+from profile_lore import make_lore
+from usage_budget import BudgetClient
+from safe_actions import text_only, describe
+from unified_runtime import UnifiedRuntime, compact_context
 
 
 def _app_dir():
@@ -40,58 +47,124 @@ def _resource_dir():
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 
+def _win_documents_dirs():
+    """La cartella 'Documents' REALE letta dal registro di Windows. È l'unica fonte
+    affidabile quando OneDrive reindirizza i Documenti: riflette esattamente dove il
+    sistema (e quindi HoI4) mette la cartella Documents dell'utente."""
+    out = []
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as k:
+            for name in ("Personal",
+                         "{F42EE2D3-909F-4907-8871-4C22FC0BF756}"):  # Documents (KNOWNFOLDER)
+                try:
+                    val, _ = winreg.QueryValueEx(k, name)
+                    p = os.path.expandvars(val)
+                    if p and p not in out:
+                        out.append(p)
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return out
+
+
 def _hoi4_doc_dirs():
-    """Possibili cartelle '.../Documents' (anche reindirizzate su OneDrive)."""
+    """TUTTE le possibili cartelle '.../Documents' (Documenti reale da registro + varianti
+    OneDrive + nome localizzato), in ordine di affidabilità."""
     up = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    docs, seen = [], set()
+
+    def add(d):
+        if d and d not in seen:
+            seen.add(d)
+            docs.append(d)
+
+    # 1) la Documents REALE dal registro (gestisce OneDrive correttamente)
+    for d in _win_documents_dirs():
+        add(d)
+    # 2) varianti OneDrive + profilo, con nome EN e IT
     bases = []
     for env in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
         v = os.environ.get(env)
         if v:
             bases.append(v)
     bases += [os.path.join(up, "OneDrive"), up]
-    docs = []
-    seen = set()
     for b in bases:
         for name in ("Documents", "Documenti"):
-            d = os.path.join(b, name)
-            if d not in seen:
-                seen.add(d)
-                docs.append(d)
+            add(os.path.join(b, name))
     return docs
 
 
+def _all_hoi4_userdirs():
+    """Tutte le cartelle utente '.../Hearts of Iron IV' candidate (una per Documents)."""
+    out, seen = [], set()
+    for d in _hoi4_doc_dirs():
+        hoi = os.path.join(d, "Paradox Interactive", "Hearts of Iron IV")
+        key = os.path.normcase(os.path.normpath(hoi))
+        if key not in seen:
+            seen.add(key)
+            out.append(hoi)
+    return out
+
+
+def _best_hoi4_userdir(configured_dir=None):
+    """La cartella utente di HoI4 GIUSTA, scelta automaticamente e in modo robusto:
+      1) quella con il game.log PIÙ RECENTE  -> è la partita che sta girando ORA (così
+         una copia vecchia in Documenti locali non vince sulla reale su OneDrive);
+      2) se nessun game.log, quella con settings.txt (la cartella utente vera);
+      3) altrimenti la prima cartella 'Hearts of Iron IV' esistente;
+      4) come ultima spiaggia, quella configurata."""
+    cands = _all_hoi4_userdirs()
+    if configured_dir:
+        key = os.path.normcase(os.path.normpath(configured_dir))
+        if key not in {os.path.normcase(os.path.normpath(c)) for c in cands}:
+            cands.insert(0, configured_dir)
+    # 1) game.log più recente
+    best, best_m = None, -1.0
+    for hoi in cands:
+        try:
+            m = os.path.getmtime(os.path.join(hoi, "logs", "game.log"))
+        except OSError:
+            continue
+        if m > best_m:
+            best, best_m = hoi, m
+    if best:
+        return best
+    # 2) settings.txt, poi 3) qualsiasi cartella HoI4 esistente
+    for hoi in cands:
+        if os.path.isfile(os.path.join(hoi, "settings.txt")):
+            return hoi
+    for hoi in cands:
+        if os.path.isdir(hoi):
+            return hoi
+    return configured_dir
+
+
 def _autodetect(cfg):
-    """Se i percorsi configurati non esistono, cercali in USERPROFILE e OneDrive."""
-    rel_log = os.path.join("Paradox Interactive", "Hearts of Iron IV", "logs", "game.log")
-    rel_loc = os.path.join("Paradox Interactive", "Hearts of Iron IV", "mod",
-                           "HOI4_AI_Diplomacy", "localisation", "english",
-                           "ai_diplo_l_english.yml")
-
-    def pick(configured, rel):
-        if configured and os.path.exists(configured):
-            return configured
-        existing = None
-        fallback = None
-        for d in _hoi4_doc_dirs():
-            cand = os.path.join(d, rel)
-            if os.path.exists(cand):
-                existing = cand
-                break
-            # se esiste almeno la cartella 'Hearts of Iron IV', tienila come ripiego
-            hoi = os.path.join(d, "Paradox Interactive", "Hearts of Iron IV")
-            if fallback is None and os.path.isdir(hoi):
-                fallback = cand
-        return existing or fallback or configured
-
-    cfg["paths"]["game_log"] = pick(cfg["paths"].get("game_log"), rel_log)
-    cfg["paths"]["mod_localisation"] = pick(cfg["paths"].get("mod_localisation"), rel_loc)
+    """Individua da solo la cartella utente di HoI4 (gestendo OneDrive/Documenti localizzati)
+    e ne deriva game.log, la localisation della mod e — di conseguenza — la cartella dove va
+    scritto il file di comandi 'aidiplo.txt'. Salva anche la lista di candidate per l'injector."""
+    conf_log = cfg["paths"].get("game_log")
+    conf_dir = os.path.dirname(os.path.dirname(conf_log)) if conf_log else None
+    userdir = _best_hoi4_userdir(conf_dir)
+    if userdir:
+        cfg["paths"]["game_log"] = os.path.join(userdir, "logs", "game.log")
+        if not os.path.isfile(cfg["paths"].get("mod_localisation", "")) and not cfg.get("game_profile"):
+            cfg["paths"]["mod_localisation"] = os.path.join(
+                userdir, "mod", "HOI4_AI_Diplomacy", "localisation", "english",
+                "ai_diplo_l_english.yml")
+    # per l'injector: tutte le cartelle candidate, così può ri-scegliere la più fresca
+    # al momento di scrivere aidiplo.txt (utile se il gioco parte DOPO il middleware).
+    cfg["paths"]["_hoi4_userdirs"] = [userdir] if userdir else []
     return cfg
 
 
-def load_config():
+def load_config(config_path=None):
     here = _app_dir()
-    cfg_path = os.path.join(here, "config.json")
-    if not os.path.exists(cfg_path):
+    cfg_path = os.path.abspath(config_path) if config_path else os.path.join(here, "config.json")
+    if not config_path and not os.path.exists(cfg_path):
         # EXE senza config.json accanto: usa quello di default impacchettato dentro l'exe
         bundled = os.path.join(_resource_dir(), "config.json")
         if os.path.exists(bundled):
@@ -102,34 +175,56 @@ def load_config():
     for k, v in cfg["paths"].items():
         if isinstance(v, str):
             cfg["paths"][k] = os.path.expandvars(v)
+    for section, keys in (("usage", ("ledger",)), ("actions", ("journal",)),
+                          ("strategist", ("settings_file", "ledger"))):
+        for key in keys:
+            value = cfg.get(section, {}).get(key)
+            if value and not os.path.isabs(value):
+                cfg[section][key] = os.path.join(here, value)
     # autorilevamento (gestisce Documenti su OneDrive)
-    cfg = _autodetect(cfg)
+    if cfg.get("paths", {}).get("auto_detect", True):
+        cfg = _autodetect(cfg)
     # il db di memoria sta accanto all'app (exe o script) se il percorso e' relativo
     if not os.path.isabs(cfg["paths"]["memory_db"]):
         cfg["paths"]["memory_db"] = os.path.join(_app_dir(), cfg["paths"]["memory_db"])
     return cfg
 
 
-class App:
+def saved_realism_mode(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            saved = stream.read().strip()
+        return saved if saved in prompts.DIFFICULTY_MODES else None
+    except (OSError, UnicodeError):
+        return None
+
+
+def load_realism_settings(cfg):
+    behavior = cfg.get("behavior", {})
+    path = behavior.get("realism_mode_file", "mode.txt")
+    if not os.path.isabs(path):
+        path = os.path.join(_app_dir(), path)
+    default = behavior.get("default_realism_mode", "realistic")
+    mode = default if default in prompts.DIFFICULTY_MODES else "realistic"
+    mode = saved_realism_mode(path) or mode
+    return path, mode
+
+
+class App(UnifiedRuntime):
     def __init__(self, cfg):
         self.cfg = cfg
+        functions.configure_profile(cfg.get("game_profile", "vanilla"))
+        prompts.configure_features(cfg)
+        self.lore = make_lore(cfg)
         self.q = queue.Queue()
         self.running = True
 
-        self.llm = LLMClient(cfg)
+        self.llm = configured_client(cfg)
         self.memory = Memory(cfg["paths"]["memory_db"])
         self.injector = Injector(cfg, logger=self._log)
 
         # --- modalita' realismo (Realistic / Plausible / Sandbox), persistente ---
-        self.mode_file = os.path.join(_app_dir(), "mode.txt")
-        self.difficulty = "realistic"
-        try:
-            if os.path.isfile(self.mode_file):
-                m = open(self.mode_file, encoding="utf-8").read().strip()
-                if m in ("realistic", "plausible", "sandbox"):
-                    self.difficulty = m
-        except Exception:
-            pass
+        self.mode_file, self.difficulty = load_realism_settings(cfg)
         prompts.set_difficulty(self.difficulty)
 
         # --- LINGUA dell'IA (scelta dal player al PRIMO avvio, testo libero), persistente.
@@ -152,10 +247,15 @@ class App:
                               on_event_send=self.event_from_ui,
                               on_set_mode=self.set_mode_from_ui,
                               current_mode=self.difficulty,
-                              on_event_close=self.on_event_close_from_ui)
+                              realism_choices=prompts.realism_mode_options(),
+                              on_event_close=self.on_event_close_from_ui,
+                              on_diplomacy=self.diplomacy_from_ui,
+                              on_usage=self.usage_from_ui if isinstance(self.llm, BudgetClient) else None,
+                              prompt_for_mode=(saved_realism_mode(self.mode_file) is None if cfg.get("unified") else True))
 
         self.latest_state = {}
         self.world = {}              # snapshot reale delle nazioni rilevanti {tag: dati}
+        self.diplomatic_contacts = {}  # target tag -> verified in-game channel identity
         self.states = {}             # regioni note {id: {id,name,owner,mine}} per gli effetti sugli stati
         # CATCH-UP: all'avvio (e a ogni nuova sessione) il log esistente e' STORIA gia' avvenuta;
         # la assorbiamo solo per il contesto (stato/gid/nazioni/regioni) SENZA rieseguire eventi,
@@ -183,7 +283,15 @@ class App:
         self._stage_busy = set()          # slot il cui bivio si sta generando proprio ora
         self._plan_advance = {}           # slot -> (giorno_di_gioco, timestamp) dell'ultimo avanzamento
         self._done_plan_ids = set()       # id dei piani GIA' completati: non ricompletano mai piu'
-        self.awaiting_choice = None   # slot del piano in attesa di una scelta (bivio)
+        self.awaiting_choice = None   # SOLO guerra civile ("civilwar") / legacy senza slot
+        # BIVI CONCORRENTI: ogni slot ha il SUO evento in gioco (aidiplo.40-45) e la scelta
+        # torna gia' etichettata con lo slot -> niente piu' variabile globale unica che
+        # attribuiva la risposta al piano sbagliato quando due bivi erano aperti insieme.
+        self._pending_plan_slots = set()   # slot con un bivio attualmente aperto in gioco
+        # PURGE DIFFERITA del "futuro abbandonato": armata quando il player carica un save
+        # PRECEDENTE della stessa campagna; eseguita solo se il tempo RIPARTE da li' (cosi'
+        # sbirciare un vecchio save e tornare a quello recente non cancella nulla).
+        self._pending_purge = None
         self.pending_civilwar = None  # guerra civile in attesa della scelta del lato
         self.channel = None          # "leader:GER" oppure "decree"
         self.channel_name = ""
@@ -209,6 +317,7 @@ class App:
         self.ambient_every_days = int(ev.get("ambient_every_days", 365))  # eventi ambient: rari (max ~1/anno)
         self._next_ambient_day = None
         self.event_player = ""
+        self._setup_unified()
 
         # thread di background
         threading.Thread(target=self._tail_log, daemon=True).start()
@@ -240,6 +349,7 @@ class App:
                     pos = 0          # nuova sessione: il log e' stato troncato
                     buf = ""
                     self._caught_up = False   # riassorbe in silenzio l'inizio della nuova sessione
+                    self.q.put(("log_reset", None))
                 # Lettura a BLOCCO (NON 'for line in f' + f.tell(): quel mix usa un buffer di
                 # read-ahead che restituisce posizioni inaffidabili -> ri-lettura/replay del log,
                 # che faceva "avanzare il tempo" a gioco in pausa). f.read()+f.tell() e' affidabile.
@@ -272,6 +382,16 @@ class App:
         return (now - last) < window
 
     def _handle_log_line(self, line):
+        if self._caught_up and getattr(self, "journal", None):
+            result = self.journal.receive(line)
+            if result:
+                self.q.put(("action_result", result))
+                return
+        if self._caught_up and "VOICES_TICK|" in line:
+            match = re.search(r"VOICES_TICK\|gid=([\d.,]+)\|day=([\d.,]+)", line)
+            if match:
+                self.q.put(("strategy_tick", tuple(int(re.sub(r"\D", "", s)) for s in match.groups())))
+            return
         # --- DATI (sempre processati, anche in catch-up: servono per il CONTESTO) ---
         tg = gs.parse_tag_line(line)
         if tg:
@@ -348,15 +468,19 @@ class App:
         if gs.is_decree_open(line):
             self.q.put(("decree", {}))
 
-    # ---------------- thread: heartbeat Player2 ----------------
+    # ---------------- thread: provider availability ----------------
     def _heartbeat_loop(self):
         first = True
         while self.running:
             ok = self.llm.heartbeat()
             if first:
-                self.q.put(("sysnote", "Player2 reachable ✓" if ok else
-                            "WARNING: Player2 not reachable at "
-                            f"{self.llm.base_url}. Open the Player2 app."))
+                if self.cfg.get("provider") == "chatgpt_plan":
+                    note = ("ChatGPT plan connected" if ok else
+                            "ChatGPT plan is not connected. Run Connect-ChatGPT.cmd and sign in.")
+                else:
+                    note = ("Local model endpoint reachable" if ok else
+                            f"Local model endpoint not reachable at {self.llm.base_url}.")
+                self.q.put(("sysnote", note))
                 first = False
             time.sleep(60)
 
@@ -367,6 +491,8 @@ class App:
                 kind, payload = self.q.get_nowait()
                 if kind == "state":
                     self._on_state(payload)
+                elif kind == "log_reset":
+                    self._reset_log_session()
                 elif kind == "open":
                     self._on_open(payload)
                 elif kind == "decree":
@@ -380,8 +506,21 @@ class App:
                 elif kind == "choice":
                     self._on_choice(payload)
                 elif kind == "news":
-                    threading.Thread(target=self._newspaper, args=(payload or "state",),
-                                     daemon=True).start()
+                    if self.cfg.get("unified"):
+                        if not self.ui.busy:
+                            self.unified_news(payload or "state")
+                    else:
+                        threading.Thread(target=self._newspaper, args=(payload or "state",),
+                                         daemon=True).start()
+                elif kind == "strategy_tick":
+                    if payload == (self.gid, self.day):
+                        self._strategy_tick(self.latest_state)
+                elif kind == "action_result":
+                    if payload["profile"] == self.cfg.get("game_profile") and payload["gid"] == self.gid:
+                        description = describe(payload["action"])
+                        self.ui.append_action(f"Engine result: {payload['status']} — {description}")
+                        if payload["status"] in ("applied", "executed"):
+                            self.memory.remember_fact("engine_action", f"Engine reported {payload['status']} for a request from day {payload['day']}: {description}")
                 elif kind == "fixleader":
                     self._on_fix_leader()
                 elif kind == "world":
@@ -396,6 +535,11 @@ class App:
                         functions.register_states({payload["name"]: payload["id"]})
                 elif kind == "assistant":
                     self.ui.append_ai(payload["name"], payload["message"])
+                elif kind == "diplomatic_identity":
+                    if self.channel == payload["channel"]:
+                        self.channel_name = payload["name"]
+                        self.ui.set_header(f"Dialogue with {payload['name']} — "
+                                           f"{payload['country']} ({payload['tag']})")
                 elif kind == "action":
                     self.ui.append_action(payload)
                 elif kind == "sysnote":
@@ -435,6 +579,9 @@ class App:
             self.ui.after(150, self._pump)
 
     def _on_fix_leader(self):
+        if self.cfg.get("unified"):
+            self.q.put(("sysnote", "Leader replacement is unavailable in unified mode."))
+            return
         """FALLBACK MANUALE (decisione aid_fix_leader). NIENTE popup (su HoI4 borderless usciva
         'buggato'/vuoto): usiamo la CASELLA DI SCRITTURA del pannello, che e' sempre visibile.
         Mettiamo il pannello in 'attesa nome': il PROSSIMO testo inviato col SEND e' il nome."""
@@ -579,14 +726,20 @@ class App:
         except Exception as e:
             self._log(f"[world] {e}")
         self._log(f"[world] {text}")
+        if getattr(self, "strategist", None):
+            self.strategist.crisis(text)
 
     def _on_state(self, st):
+        previous = self.latest_state
         self.latest_state = st
         # mostra SEMPRE lo stato corrente nella barra
         self.ui.set_status(
             f"{st.get('name','?')} ({st.get('tag','?')}) | {st.get('date','?')} | "
             f"Stab {st.get('stab','?')}% WS {st.get('ws','?')}% PP {st.get('pp','?')} | "
             f"Tension {st.get('wt','?')}%")
+        if any(previous.get(k) != st.get(k) for k in ("tag", "day", "gid")):
+            self._log(f"[sync] {st.get('tag', '?')} date={st.get('date', '?')} "
+                      f"day={st.get('day', '?')} gid={st.get('gid', '?')}")
         # day/gid di QUESTA riga. Robusto al FORMATO: alcune locale di HoI4 scrivono i numeri
         # grandi col separatore delle migliaia (es. "1.234.567"), quindi teniamo solo le cifre
         # prima di convertire (cosi' il gid viene letto bene e la memoria resta isolata per
@@ -608,6 +761,10 @@ class App:
             self.gid = g_read
         if d_read > 0:
             self.day = d_read
+        if g_read > 0:
+            st["gid"] = str(g_read)
+        if d_read > 0:
+            st["day"] = str(d_read)
         # tag della nazione del player (es. POR). E' SEMPRE presente e affidabile, quindi e'
         # l'ancora migliore per capire "di quale partita stiamo parlando": un piano nato in
         # un'altra nazione (es. Afghanistan/Kabul) non deve MAI comparire o avanzare ora.
@@ -615,6 +772,25 @@ class App:
         if ptag:
             self._ptag = ptag
         self.memory.set_context(self.gid, self.day)
+        # PURGE DIFFERITA (vedi __init__): se dopo un salto indietro il TEMPO E' RIPARTITO
+        # dal punto caricato, il vecchio futuro e' ufficialmente un ramo abbandonato ->
+        # dimenticalo (con la guardia sul timestamp: le memorie nuove restano). Se invece
+        # il player e' TORNATO al save recente (giorno >= com'era) o ha cambiato partita,
+        # disarma senza cancellare nulla.
+        pp = self._pending_purge
+        if pp:
+            if self.gid != pp["gid"] or (d_read > 0 and self.day >= pp["prev_day"]):
+                self._pending_purge = None       # altra partita / tornati al save recente
+            elif d_read > 0 and pp["day"] < self.day <= pp["day"] + 3:
+                # il tempo e' RIPARTITO naturalmente (+1 giorno, tolleranza 3) dal punto
+                # caricato: il vecchio futuro e' DAVVERO un ramo abbandonato -> dimenticalo.
+                self.memory.forget_future(pp["day"], pp["ts"])
+                self._pending_purge = None
+                self._log(f"[memoria] ramo abbandonato dimenticato (dopo il giorno {pp['day']})")
+            elif d_read > 0 and self.day > pp["day"] + 3:
+                # SALTO in avanti (caricato un TERZO save intermedio): prudenza, non
+                # cancellare nulla — quelle memorie appartengono alla timeline caricata.
+                self._pending_purge = None
         # cambio REALE di partita / salvataggio caricato. Tre segnali, tutti robusti:
         #  - gid diverso (su lettura valida, mai su uno 0 spurio)
         #  - TAG del player diverso (cambio nazione = quasi certamente nuova partita)
@@ -627,12 +803,23 @@ class App:
             self._reconcile_plans()
             # se e' un VERO cambio (non il primo avvio): ripristina la chat visibile
             if self._last_gid is not None and (new_game or tag_changed or went_back):
+                if went_back and not new_game and not tag_changed:
+                    # SALTO INDIETRO nella STESSA campagna: arma la purge differita del
+                    # futuro ora sospeso. time.time() = spartiacque: tutto cio' che e'
+                    # stato scritto PRIMA di adesso con day > oggi appartiene al vecchio
+                    # ramo; cio' che verra' scritto d'ora in poi e' la nuova timeline.
+                    self._pending_purge = {"gid": self.gid, "day": self.day,
+                                           "prev_day": self._last_day,
+                                           "ts": time.time()}
+                else:
+                    self._pending_purge = None   # altra partita: nessuna purge da fare
                 # le guardie anti-spam appartengono alla partita precedente: azzerale
                 self._fired_steps.clear()
                 self._fired_plan_starts.clear()
                 self._stage_busy.clear()
                 self.channel = None
                 self.channel_name = ""
+                self.diplomatic_contacts.clear()
                 self.world = {}      # lo snapshot del mondo appartiene alla partita precedente
                 self.states = {}     # idem per le regioni note
                 self.ui.clear_history()
@@ -661,7 +848,7 @@ class App:
         ptag = (self._ptag or "").upper()
         tag = (str(p.get("tag") or "")).upper()
         if tag:
-            return bool(ptag) and tag == ptag
+            return bool(ptag) and tag == ptag and (not p.get("gid") or p.get("gid") == self.gid)
         return self.gid > 0 and p.get("gid") == self.gid
 
     def _reconcile_plans(self):
@@ -689,6 +876,24 @@ class App:
                 # NON usiamo lo stadio salvato nel DB: apparterrebbe a una timeline piu' avanti.
                 elapsed = max(0, self.day - created)
                 p["stage_idx"] = min(st_total, elapsed // seg)
+                # RIAVVOLGI anche lo storico: le scelte fatte ai bivi DOPO lo stadio
+                # ricalcolato appartengono alla timeline abbandonata. Senza questa
+                # pulizia i bivi futuri venivano generati "come conseguenza" di scelte
+                # mai avvenute in questo ramo (e la risposta gia' registrata bloccava
+                # il bonus del bivio quando ri-usciva: answered_stage fantasma).
+                cl = p.get("choices_log") or []
+                if cl:
+                    keep = []
+                    for e in cl:
+                        m = re.match(r"Crossroads (\d+):", str(e))
+                        if m is None or int(m.group(1)) <= p["stage_idx"]:
+                            keep.append(e)
+                    p["choices_log"] = keep
+                try:
+                    if int(p.get("answered_stage")) > p["stage_idx"]:
+                        p["answered_stage"] = None
+                except Exception:
+                    pass
                 # questo passo (e quelli futuri) potra' ri-uscire: pulisci le guardie anti-spam
                 self._done_plan_ids.discard(p.get("id"))
                 self._fired_steps = {k for k in self._fired_steps
@@ -718,9 +923,13 @@ class App:
             "role": plan.get("role", "leader"),
             "final_actions": plan.get("final_actions", []),
             "gid": plan.get("gid"), "tag": plan.get("tag"),
+            "answered_stage": plan.get("answered_stage"),
             "choices_log": plan.get("choices_log", [])})
 
     def _on_plan_done(self, slot):
+        if self.cfg.get("unified"):
+            self.q.put(("sysnote", "A legacy plan timer was received. Unified mode does not execute legacy plan rewards."))
+            return
         if not (0 <= slot < len(self.plan_slots)):
             return
         plan = self.plan_slots[slot] or next(
@@ -774,7 +983,7 @@ class App:
             threading.Thread(target=self._complete_plan, args=(plan,), daemon=True).start()
 
     def _stage_decision(self, slot, plan):
-        ctx = gs.context_for_llm(self.latest_state, self.world, self.states)
+        ctx = self._conversation_context("narration")
         whose = ("the clandestine scheme of the NON-government figure the player is acting as "
                  "(a faction/general/conspirator), against or apart from the sitting "
                  "government — frame the crossroads from THEIR side, not the State's"
@@ -836,9 +1045,14 @@ class App:
         plan["opt_a"] = a                      # testo delle opzioni: serve a RICORDARE la scelta
         plan["opt_b"] = b
         self.plan_slots[slot] = plan
-        self.awaiting_choice = slot
+        self._pending_plan_slots.add(slot)
         try:
-            cmds = self.injector.prepare_decision_event(plan["title"], msg, a, b)
+            # Evento bivio DEDICATO a questo slot (aidiplo.4<slot>): testo e scelta non
+            # interferiscono MAI con i bivi degli altri piani aperti nello stesso momento.
+            native_slot = slot if self.cfg.get("behavior", {}).get("per_slot_events", False) else None
+            if native_slot is None:
+                self.awaiting_choice = slot
+            cmds = self.injector.prepare_decision_event(plan["title"], msg, a, b, slot=native_slot)
             # TIMER NATIVO HoI4: schedula il PROSSIMO passo (bivio o completamento) fra 'segment'
             # giorni di gioco. E' HoI4 a contare il tempo (rispetta pausa/velocita'/salvataggi):
             # cosi' i bivi escono distanziati e il completamento solo DOPO l'ultimo bivio.
@@ -853,22 +1067,43 @@ class App:
         finally:
             self._stage_busy.discard(slot)     # il bivio e' stato mostrato: libera lo slot
 
-    def _on_choice(self, c):
-        # guerra civile: scelta del lato
-        if self.pending_civilwar is not None and self.awaiting_choice == "civilwar":
-            cw = self.pending_civilwar
-            self.pending_civilwar = None
-            self.awaiting_choice = None
-            self._resolve_civilwar(cw, c)
+    def _on_choice(self, payload):
+        if self.cfg.get("unified"):
             return
-        slot = self.awaiting_choice
-        self.awaiting_choice = None
+        # payload: {"slot": int|None, "c": 1|2|3}. slot!=None arriva dai bivi PER-SLOT
+        # (aidiplo.40-45): la scelta e' gia' etichettata col piano giusto. slot=None arriva
+        # dal canale condiviso aidiplo.46 (guerra civile / compatibilita' col vecchio flusso).
+        if isinstance(payload, dict):
+            c = payload.get("c")
+            slot = payload.get("slot")
+        else:                                  # compatibilita': vecchio payload intero
+            c, slot = payload, None
+        if c not in (1, 2, 3):
+            return
+        if slot is None:
+            # canale condiviso: guerra civile (scelta del lato)...
+            if self.pending_civilwar is not None and self.awaiting_choice == "civilwar":
+                cw = self.pending_civilwar
+                self.pending_civilwar = None
+                self.awaiting_choice = None
+                self._resolve_civilwar(cw, c)
+                return
+            # ...oppure il vecchio flusso legacy a variabile globale
+            slot = self.awaiting_choice
+            self.awaiting_choice = None
         if not isinstance(slot, int) or not (0 <= slot < len(self.plan_slots)):
             return
+        self._pending_plan_slots.discard(slot)
         plan = self.plan_slots[slot]
         if not plan:
             return
         stage = plan.get("stage_idx", "?")
+        # ANTI-DOPPIONE: ogni bivio accetta UNA sola risposta. Righe di log rilette o
+        # doppioni non riapplicano il bonus ne' registrano scelte fantasma; persiste nel
+        # DB (answered_stage), quindi regge anche a riavvii del middleware.
+        if plan.get("answered_stage") == stage:
+            return
+        plan["answered_stage"] = stage
         sit = (plan.get("stage_situation") or "").strip()
         if c == 3:
             # 3a opzione: il player prende in mano la situazione e SCRIVE -> apre il canale
@@ -899,9 +1134,31 @@ class App:
         self._persist_plan_meta(plan)
         self.q.put(("action", f"Plan '{plan['title']}' — chose: {chosen}"))
         self.memory.remember_fact("choice", f"Plan '{plan['title']}' — {entry}")
-        eff = functions._sanitize_effect((plan.get("choice_effects") or {}).get(str(c), ""))
+        eff = self._safe_crossroad_effect((plan.get("choice_effects") or {}).get(str(c), ""))
         if eff:
             self._dispatch([f"effect ROOT = {{ {eff} }}"])
+
+    def _safe_crossroad_effect(self, eff):
+        """Valida e RICOSTRUISCE l'effetto di un bivio in forma pulita, cosi' non puo' MAI dare
+        'errore di compilazione' in gioco. Ammette solo un piccolo set sicuro (stat numeriche +
+        spirito nazionale temporaneo con idea NOTA). Qualsiasi altra cosa -> '' (ignorata)."""
+        s = (eff or "").strip()
+        if not s:
+            return ""
+        m = re.match(r"(add_political_power|add_stability|add_war_support|add_manpower|"
+                     r"add_command_power|add_war_support)\s*=\s*(-?\d+(?:\.\d+)?)", s)
+        if m:
+            return f"{m.group(1)} = {m.group(2)}"
+        # spirito nazionale temporaneo: SOLO idee esistenti (qualsiasi ordine idea/days)
+        m = re.match(r"add_timed_idea\s*=\s*\{(.+)\}", s)
+        if m:
+            body = m.group(1)
+            im = re.search(r"idea\s*=\s*(\w+)", body)
+            dm = re.search(r"days\s*=\s*(\d+)", body)
+            if im and im.group(1) in functions.KNOWN_IDEAS:
+                days = dm.group(1) if dm else "90"
+                return f"add_timed_idea = {{ idea = {im.group(1)} days = {days} }}"
+        return ""
 
     def _resolve_civilwar(self, cw, c):
         """Applies the side choice in a civil war VIA EVENTS (atomic), not the 'civilwar'
@@ -941,6 +1198,11 @@ class App:
             cmds.append(f"eval_effect {tag} = {{ set_variable = {{ aidiplo_cw_ideo = {new_code} }} }}")
             cmds.append(f"event aidiplo.61 {tag}")
             self.q.put(("action", f"Defend the government against the {new_ideo} rebels"))
+        # GUERRA CIVILE = di fatto una rifondazione dello Stato: SUBITO DOPO la scelta dello
+        # schieramento offriamo SEMPRE al player il reset dei focus (evento aidiplo.62), perche'
+        # il vecchio albero dei focus non ha piu' senso dopo lo scontro interno. Va in coda, cosi'
+        # arriva dopo l'eventuale cambio di ideologia/leader (aidiplo.60/61).
+        cmds.append(f"event aidiplo.62 {tag}")
         self._dispatch(cmds)
         # il NOME del nuovo capo (guida della rivoluzione) lo mette l'evento aidiplo.60 via
         # set_country_leader_name = "AIDIPLO_LEADER" (chiave gia' scritta col nome sopra).
@@ -981,7 +1243,7 @@ class App:
         'state' (stampa di regime/governo), 'neutral' (stampa indipendente/estera equilibrata),
         'opposition' (stampa di opposizione/critica/clandestina). Ognuna ha voce e taglio diversi
         ma TUTTE devono restare aderenti ai fatti reali (nessuna invenzione)."""
-        ctx = gs.context_for_llm(self.latest_state, self.world, self.states)
+        ctx = self._conversation_context("press")
         facts = self.memory.facts_block()
         ideo = self.latest_state.get("ideology_name", "?")
         voice = {
@@ -998,7 +1260,7 @@ class App:
                            "dictatorship it is underground/banned; in a democracy it is the "
                            "opposition paper). Critical in TONE but still truthful."),
         }.get(kind, "the state newspaper")
-        sysp = ("You are a JOURNALIST of 1936-1945 writing the editorial of " + voice + "\n\n"
+        sysp = ("You are a JOURNALIST in the year shown by CURRENT WORLD STATE, writing the editorial of " + voice + "\n\n"
                 + prompts.GROUNDING_RULE +
                 "\nReport ONLY what the WORLD STATE, the WORLD SNAPSHOT and the GAME HISTORY "
                 "MEMORY below actually show. Comment on those real developments only. If a war "
@@ -1022,6 +1284,26 @@ class App:
         self._dispatch(cmds)
         self.q.put(("assistant", {"name": "Press - " + title, "message": body}))
 
+    def _find_civilwar_action(self, actions):
+        """Cerca un'azione start_civil_war in una lista di azioni (ricompense o final_actions).
+        Ritorna (cw_dict_oppure_None, lista_senza_quell'azione). Usa build_action per validare
+        l'ideologia e ricavare l'eventuale leader, come nel percorso live."""
+        cw, rest = None, []
+        for a in (actions or []):
+            if cw is None and isinstance(a, dict) and str(a.get("name")) == "start_civil_war":
+                try:
+                    res = functions.build_action(a.get("name"), a.get("args")) or {}
+                    sp = res.get("special") or {}
+                    if sp.get("type") == "civilwar":
+                        cw = {"ideology": sp.get("ideology", "neutrality"),
+                              "leader": sp.get("leader", ""),
+                              "target": sp.get("target", "ROOT")}
+                        continue   # rimossa dalla lista: la gestiamo a parte
+                except Exception:
+                    pass
+            rest.append(a)
+        return cw, rest
+
     def _complete_plan(self, plan):
         title = plan.get("title", "Plan")
         facts = plan.get("facts", "")
@@ -1030,7 +1312,7 @@ class App:
         reward_actions = []
         eff_summary = ""           # spiegazione effetti in LINGUAGGIO NATURALE, lingua del player
         try:
-            ctx = gs.context_for_llm(self.latest_state, self.world, self.states)
+            ctx = self._conversation_context("plan")
             mem = self.memory.facts_block()
             sysp = (prompts.GROUNDING_RULE + "\n" + prompts.OUTCOMES_RULE + "\n"
                     "You are the narrating voice of Hearts of Iron IV, resolving the FINAL "
@@ -1058,6 +1340,16 @@ class App:
                     "delivers civilian AND military factories AND some infrastructure). "
                     "Setbacks for PARTIAL/FAILURE = catalog numeric actions with NEGATIVE amounts "
                     "(e.g. add_political_power amount -120, add_stability amount -0.06).\n"
+                    "CIVIL WAR — CRITICAL: if this plan was a COUP, UPRISING, SECESSION, REVOLUTION "
+                    "or any attempt to seize/split the state, and the outcome is a CONTESTED split "
+                    "(the country divides and the two sides actually FIGHT — not a clean, instant, "
+                    "bloodless takeover), you MUST include the action {\"name\":\"start_civil_war\","
+                    "\"args\":{\"ideology\":\"fascism|communism|democratic|neutrality\",\"leader\":"
+                    "\"<name of the figure leading the breakaway side, if any>\"}}. This is what makes "
+                    "the war REALLY break out and lets the player CHOOSE which side to fight on. NEVER "
+                    "describe a civil war, insurrection or divided country in the narration WITHOUT "
+                    "emitting this action — describing it in prose alone does nothing in-game. (Use it "
+                    "for SUCCESS and PARTIAL; on FAILURE the attempt is simply crushed, no civil war.)\n"
                     + self._lang_directive() + "\n" + functions.catalog_text() + "\n"
                     "Reply ONLY in JSON: {\"verdict\":\"success|partial|failure\", \"message\":\"<2-4 "
                     "sentences narrating the REAL OUTCOME — do NOT restate the plan's original "
@@ -1097,6 +1389,17 @@ class App:
         # FALLIMENTO: nessuna ricompensa, solo eventuali contraccolpi (azioni con importo negativo).
         if verdict == "failure":
             reward_actions = [a for a in reward_actions if self._is_setback_action(a)]
+        # GUERRA CIVILE come ESITO del piano (golpe/insurrezione/secessione): l'azione
+        # start_civil_war e' uno 'special' e quindi NON passa dalle ricompense normali; la
+        # intercettiamo qui (dalle ricompense dell'IA o dai final_actions del piano) e, dopo aver
+        # raccontato l'esito, faremo SCEGLIERE al player il lato — esattamente come nel percorso
+        # live. Vale per SUCCESS e PARTIAL; su FAILURE il tentativo viene solo represso.
+        plan_final = plan.get("final_actions") or []
+        civilwar = None
+        if verdict in ("success", "partial"):
+            civilwar, reward_actions = self._find_civilwar_action(reward_actions)
+            if civilwar is None:
+                civilwar, plan_final = self._find_civilwar_action(plan_final)
         # Trasforma le azioni di catalogo in COMANDI VALIDATI (che eseguono DAVVERO) e in
         # DESCRIZIONI PULITE leggibili (mai il comando grezzo). Le 'special' (regime/leader/eventi/
         # piani) NON vanno qui: gli esiti di regime passano da final_actions.
@@ -1124,7 +1427,7 @@ class App:
         else:
             tech_parts = list(reward_descs)
             if verdict == "success":                    # esiti di catalogo (regime/leader/rinomina)
-                for fa in (plan.get("final_actions") or []):
+                for fa in plan_final:
                     try:
                         r2 = functions.build_action(fa.get("name"), fa.get("args")) or {}
                         if r2.get("desc"):
@@ -1140,11 +1443,25 @@ class App:
         self._dispatch(cmds)
         # ESITO di catalogo (golpe riuscito -> regime_change / set_leader / rename_country):
         # applicato SOLO a SUCCESSO pieno (un esito parziale non rovescia davvero il regime).
-        final_actions = plan.get("final_actions") or []
-        if final_actions and verdict == "success":
-            self._execute_actions(final_actions, narr)
+        # Se l'esito e' una GUERRA CIVILE, NON applichiamo qui un regime change "pulito": la
+        # transizione la gestisce la scelta del lato (aidiplo.60/61) qui sotto.
+        if plan_final and verdict == "success" and not civilwar:
+            self._execute_actions(plan_final, narr)
         self.q.put(("assistant", {"name": "Chronicle", "message": f"[{verdict.upper()}] {full}"}))
         self.memory.remember_fact("plan", f"Plan '{title}' -> {verdict}")
+        # GUERRA CIVILE: il piano (golpe/insurrezione) ha SPACCATO il paese -> ora il player sceglie
+        # il lato, ESATTAMENTE come nel percorso live. Mettiamo in attesa la scelta e iniettiamo
+        # l'evento-decisione con le due opzioni; alla scelta partira' _resolve_civilwar.
+        if civilwar and verdict in ("success", "partial"):
+            self.pending_civilwar = {"ideology": civilwar.get("ideology", "neutrality"),
+                                     "leader": civilwar.get("leader", ""),
+                                     "target": civilwar.get("target", "ROOT")}
+            self.awaiting_choice = "civilwar"
+            self.q.put(("action", f"Civil war ({civilwar.get('ideology','')}): choose your side"))
+            self._dispatch(self.injector.prepare_decision_event(
+                "Civil war",
+                "The plan has split the nation into open civil war. Which side will you take?",
+                "Lead the revolution", "Defend the legitimate government"))
 
     def _resolve_reward_actions(self, actions):
         """Trasforma azioni di catalogo (ricompense del piano) in (comandi_validati, descrizioni
@@ -1297,6 +1614,7 @@ class App:
         sospeso (bivio piano / scelta guerra civile), o se l'IA sta gia' rispondendo."""
         return (self.events_enabled and self.event is None
                 and self.awaiting_choice is None and self.pending_civilwar is None
+                and not self._pending_plan_slots
                 and not self.ui.busy and bool(self.latest_state))
 
     def _start_event(self, title, situation, kind="", role="leader"):
@@ -1341,7 +1659,7 @@ class App:
             leader = self.latest_state.get("leader", "the Head of State")
             sysp = prompts.build_crossroad_system(pname, ptag, leader,
                                                   ev.get("role", "leader"), ev["title"])
-            head = (f"CROSSROADS of plan: {ev['title']}\n{gs.context_for_llm(self.latest_state, self.world, self.states)}\n\n"
+            head = (f"CROSSROADS of plan: {ev['title']}\n{self._conversation_context(ch)}\n\n"
                     f"{self.memory.facts_block()}")
             msgs = ([{"role": "system", "content": sysp},
                      {"role": "user", "content": head}] + ev["history"][-12:])
@@ -1381,18 +1699,40 @@ class App:
         self._raise()
 
     def _on_open(self, info):
+        try:
+            contact = gs.diplomatic_contact(info, self.latest_state, self.world)
+        except ValueError as exc:
+            self.ui.append_system(str(exc))
+            return
         self._park_active_event()   # se stava giocando un evento, lo riprende piu' avanti
-        tag = info.get("target")
-        tname = info.get("tname", tag)
-        tleader = info.get("tleader", tname)
+        tag, tname, tleader = contact["target"], contact["tname"], contact["tleader"]
+        self.diplomatic_contacts[tag] = contact
         self.channel = f"leader:{tag}"
         self.channel_name = tleader
         player_name = self.latest_state.get("name", "our nation")
-        self.system_prompt = prompts.build_leader_system(tag, tname, tleader, player_name)
+        self.system_prompt = prompts.build_leader_system(tag, tname, tleader, player_name,
+                                                        contact["player"])
         self.ui.set_header(f"Dialogue with {tleader} — {tname} ({tag})")
         self._show_channel_history()
         self.ui.append_system(f"Diplomatic channel opened with {tleader} ({tname}).")
+        self._log(f"[diplomacy] player={contact['player']} target={tag} leader={tleader} "
+                  f"source={info.get('source', 'game_button')}")
         self._raise()
+
+    def _conversation_context(self, channel):
+        if isinstance(getattr(self, "llm", None), BudgetClient):
+            actor = channel.split(":", 1)[1] if channel.startswith("leader:") else None
+            context = compact_context(self.latest_state, self.world, actor)
+        else:
+            context = gs.context_for_llm(self.latest_state, self.world, self.states)
+        if channel.startswith("leader:"):
+            tag = channel.split(":", 1)[1]
+            contact = self.diplomatic_contacts.get(tag, {})
+            context += "\n\n" + gs.diplomatic_context(self.latest_state, self.world, contact)
+        lore = getattr(self, "lore", None)
+        if lore:
+            context += "\n\n" + lore.briefing(self.latest_state, self.world, channel)
+        return context
 
     def _on_decree(self):
         self._park_active_event()
@@ -1465,10 +1805,12 @@ class App:
         self.difficulty = mode
         prompts.set_difficulty(mode)
         try:
+            os.makedirs(os.path.dirname(self.mode_file), exist_ok=True)
             open(self.mode_file, "w", encoding="utf-8").write(mode)
         except Exception:
             pass
-        self.q.put(("sysnote", f"Realism mode set to: {mode}."))
+        label = next((label for label, key, _ in prompts.realism_mode_options() if key == mode), mode)
+        self.q.put(("sysnote", f"Realism mode set to: {label}."))
         # PRIMO AVVIO: SUBITO DOPO aver scelto la modalita' (e DOPO che il selettore difficolta'
         # si e' chiuso), chiedi in che LINGUA deve parlare l'IA. Schedulato con after() cosi' il
         # box lingua esce DOPO la schermata difficolta', non sopra/prima di essa.
@@ -1510,10 +1852,30 @@ class App:
     def decree_from_ui(self):
         self._on_decree()
 
+    def diplomacy_from_ui(self):
+        if self.gid <= 0:
+            self.ui.append_system("Load your campaign and open Head of State Office to sync its countries.")
+            return
+        countries = gs.diplomatic_roster(self.latest_state, self.world)
+        if not countries:
+            self.ui.append_system("No foreign countries are synchronized yet. Open Head of State Office "
+                                  "from the in-game Decisions menu, then try again.")
+            return
+        campaign = (self.gid, self.latest_state.get("tag"))
+        def selected(contact):
+            if campaign != (self.gid, self.latest_state.get("tag")):
+                self.ui.append_system("Campaign changed while choosing a country. Open the country list again.")
+                return
+            self._on_open(dict(contact, source="country_picker"))
+        self.ui.choose_country(countries, selected)
+
     def life_from_ui(self):
         self._on_life({})
 
     def test_injection(self):
+        if self.cfg.get("unified"):
+            self.ui.append_system("The old +500 test is disabled. Use an approved, bounded unified action test.")
+            return
         self.ui.append_system(
             "TEST running: bringing HoI4 to the foreground and running 'pp 500' + "
             "'eval_effect add_political_power = 500'. PP +500 = direct commands ok; "
@@ -1534,7 +1896,8 @@ class App:
             return
         if not self.channel:
             self.ui.append_system("Open a channel first: in HoI4 use the DECISION "
-                                  "'Talk to a leader' or 'Head of State Office'.")
+                                  "'Head of State Office', or open another country's "
+                                  "diplomacy screen and click 'Talk to the Leader (AI)'.")
             return
         if self.channel.startswith("event:"):     # canale di un evento interattivo
             self.ui.set_busy(True)
@@ -1546,8 +1909,24 @@ class App:
 
     def _do_llm(self, text, channel, channel_name, system_prompt):
         try:
+            if getattr(self, "cfg", {}).get("unified"):
+                self._unified_turn(text, channel, channel_name)
+                return
+            turn_state = dict(self.latest_state)
+            no_actions = text_only(text)
+            if channel.startswith("leader:"):
+                tag = channel.split(":", 1)[1]
+                contact = gs.diplomatic_contact(self.diplomatic_contacts.get(tag, {}),
+                                                self.latest_state, self.world)
+                channel_name = contact["tleader"]
+                system_prompt = prompts.build_leader_system(
+                    tag, contact["tname"], channel_name,
+                    self.latest_state.get("name", "our nation"), contact["player"])
+                self.q.put(("diplomatic_identity", {"channel": channel, "tag": tag,
+                            "name": channel_name, "country": contact["tname"]}))
             history = self.memory.get_history(channel, self.max_history)
-            context = gs.context_for_llm(self.latest_state, self.world, self.states)
+            system_prompt = prompts.refresh_realism(system_prompt)
+            context = self._conversation_context(channel)
             wrapped = prompts.wrap_user(text, context, self.memory.facts_block())
             # RINFORZO LINGUA (anche in chat): gli fissiamo la lingua sul messaggio CORRENTE del
             # player, cosi' anche la PRIMISSIMA risposta della partita e' nella lingua giusta
@@ -1558,13 +1937,13 @@ class App:
             # attivo, l'IA deve LANCIARE subito l'impresa (start_plan) alla prima descrizione,
             # senza aspettare un secondo messaggio di conferma. (Quando un piano e' gia' attivo
             # il promemoria sparisce: niente piani doppi.)
-            if channel == "actor" and not any(self.plan_slots):
+            if not no_actions and channel == "actor" and not any(self.plan_slots):
                 wrapped += ("\n\n[SYSTEM REMINDER: if the player has described ANY plot, coup or "
                             "undertaking — even merely planning it — you MUST emit a start_plan "
                             "action NOW in this reply (stages >= 5 for a coup). Do NOT wait for a "
                             "confirmation message, do NOT only narrate or say it 'is in "
                             "preparation'. Launch it.]")
-            elif channel == "decree" and self._looks_like_plan_launch(text, ""):
+            elif not no_actions and channel == "decree" and self._looks_like_plan_launch(text, ""):
                 wrapped += ("\n\n[SYSTEM REMINDER: the player is asking to LAUNCH a long-term plan/"
                             "undertaking (industrialisation, rearmament, a programme that unfolds "
                             "over time). You MUST emit a start_plan action in THIS reply, with a "
@@ -1574,8 +1953,19 @@ class App:
                             "appear over time.]")
             messages = ([{"role": "system", "content": system_prompt}] +
                         history + [{"role": "user", "content": wrapped}])
+            if isinstance(self.llm, BudgetClient):
+                ceiling = self.llm.budget.settings["max_input_chars"] - len(request_instructions(self.cfg))
+                while history and sum(len(m["content"]) for m in messages) > ceiling:
+                    history = history[2:]
+                    messages = [messages[0], *history, messages[-1]]
 
-            raw = self.llm.chat(messages)
+            raw = (self.llm.interactive_chat(messages) if isinstance(self.llm, BudgetClient)
+                   else self.llm.chat(messages))
+            if (self.latest_state.get("gid") != turn_state.get("gid")
+                    or self.latest_state.get("tag") != turn_state.get("tag")
+                    or int(self.latest_state.get("day", 0)) < int(turn_state.get("day", 0))):
+                self.q.put(("sysnote", "A reply from the previous campaign snapshot was discarded."))
+                return
             parsed = LLMClient.parse_ai_json(raw)
             msg = parsed.get("message", "")
             actions = parsed.get("actions", []) or []
@@ -1590,7 +1980,8 @@ class App:
             # ask the model ONCE more to turn its OWN narration into the concrete in-game
             # action(s) — same channel rules, so start_plan / immediate-vs-deferred / costs all
             # still apply. If the narration was pure talk, it returns no actions and nothing runs.
-            if self.auto_exec and not actions and self._needs_action_extraction(channel, msg):
+            if (not no_actions and getattr(self, "cfg", {}).get("behavior", {}).get("action_extraction", not getattr(self, "cfg", {}).get("unified", False))
+                    and self.auto_exec and not actions and self._needs_action_extraction(channel, msg)):
                 recovered = self._extract_actions(channel, text, msg, system_prompt)
                 if recovered:
                     actions = recovered
@@ -1602,7 +1993,7 @@ class App:
             # PARTE SEMPRE (annuncio + bivi scanditi nel tempo + completamento), invece di restare
             # solo chiacchiere in chat. I bivi e la ricompensa li genera comunque l'IA strada
             # facendo. Solo nei canali dove un piano ha senso e solo se non ce n'e' gia' uno.
-            if (self.auto_exec and not actions and channel in ("decree", "actor")
+            if (not no_actions and self.auto_exec and not actions and channel in ("decree", "actor")
                     and self._looks_like_plan_launch(text, msg)
                     and not self._is_rejection(msg)):
                 stg = 5 if channel == "actor" else 3
@@ -1629,12 +2020,18 @@ class App:
             # niente cambi di IDEOLOGIA non richiesti: un semplice cambio di capo/nome mantiene
             # l'ideologia attuale, a meno che il player non chieda esplicitamente un cambio regime.
             self._guard_leader_ideology(actions, text, msg)
+            # gli SLOT DI RICERCA non si concedono SUBITO: rappresentano centri di ricerca da
+            # costruire -> li spostiamo nell'esito di un piano a tempo (arrivano alla FINE).
+            actions = self._defer_research_slots(actions, msg)
 
             # persist AFTER the optional extraction so the extra turn is not duplicated in history
-            self.memory.add_message(channel, "user", text)
-            self.memory.add_message(channel, "assistant", msg)
+            if int(turn_state.get("gid", 0)) > 0:
+                self.memory.add_turn(channel, text, msg, int(turn_state["gid"]), int(turn_state.get("day", 0)))
+            else:
+                self.memory.add_message(channel, "user", text)
+                self.memory.add_message(channel, "assistant", msg)
 
-            if self.auto_exec:
+            if self.auto_exec and not no_actions:
                 self._last_player_text = text or ""   # per classificare costo/guadagno di PP
                 self._execute_actions(actions, msg)
         except Exception as e:
@@ -1660,7 +2057,12 @@ class App:
     _PLAN_WORDS = ("piano", "plan", "programma", "program", "operazione", "operation",
                    "campagna", "campaign", "complotto", "cospiraz", "conspir", "colpo di stato",
                    "coup", "golpe", "putsch", "industrializ", "potenziamento", "rearm", "riarmo",
-                   "five-year", "quinquennale", "fortific", "progetto", "project", "iniziativa")
+                   "five-year", "quinquennale", "fortific", "progetto", "project", "iniziativa",
+                   # progetti che si COSTRUISCONO nel tempo -> devono diventare piani a tappe
+                   "minier", "mining", "miniera", "giacimen", "deposit", "estrazion", "extraction",
+                   "scavare", "trivell", "ricerca", "research", "centro di ricerca", "research centre",
+                   "research center", "esplora", "prospect", "sviluppo industriale", "raffineria",
+                   "refinery", "cantier", "costruzione di")
 
     def _looks_like_plan_launch(self, text, msg):
         """True se il messaggio del player (o la narrazione) descrive l'avvio di un piano/impresa
@@ -1722,6 +2124,48 @@ class App:
                 if isinstance(args, dict):
                     args["ideology"] = cur_name
 
+    def _defer_research_slots(self, actions, msg):
+        """Uno SLOT DI RICERCA non va concesso ALL'ISTANTE da un decreto: rappresenta un centro di
+        ricerca / l'addestramento di scienziati, cosa che si COSTRUISCE nel tempo. Se l'IA lo mette
+        come azione IMMEDIATA, lo togliamo dall'immediato e lo consegniamo come ESITO di un piano a
+        tempo (arriva alla FINE). Gli altri effetti immediati (i costi: PP, stabilita', spirito) e un
+        eventuale start_plan gia' presente restano. Ritorna la lista azioni ripulita."""
+        if not actions:
+            return actions
+        slot_total = 0
+        rest = []
+        for a in actions:
+            if isinstance(a, dict) and a.get("name") in ("add_research_slot", "research_slot"):
+                amt = int(functions._num((a.get("args") or {}).get("amount"), 1))
+                if amt > 0:
+                    slot_total += amt
+                    continue                      # rimuovi dalle azioni immediate
+            rest.append(a)
+        if slot_total <= 0:
+            return actions                        # niente slot positivi immediati: lascia com'era
+        tag = self.latest_state.get("tag", "") or "ROOT"
+        slot_act = {"name": "add_research_slot", "args": {"amount": slot_total, "target": tag}}
+        # se nella stessa risposta c'e' gia' un piano, aggiungi lo slot al SUO esito; altrimenti
+        # crea un piano dedicato che lo consegna al completamento.
+        plan = next((a for a in rest if isinstance(a, dict) and a.get("name") == "start_plan"), None)
+        if plan is not None:
+            pa = plan.setdefault("args", {})
+            oc = pa.get("outcome") or pa.get("final_actions") or []
+            if not isinstance(oc, list):
+                oc = []
+            oc.append(slot_act)
+            pa["outcome"] = oc
+        else:
+            rest.append({"name": "start_plan", "args": {
+                "title": "Research Programme",
+                "days": 180, "stages": 0,
+                "summary": (str(msg or "").strip()[:200] or
+                            "A new research effort gets under way; it will bear fruit once built."),
+                "outcome": [slot_act]}})
+            self.q.put(("action", "A research slot is earned when the facility is BUILT: started as "
+                                  "a timed plan, granted at completion (not instantly)."))
+        return rest
+
     def _augment_equipment_actions(self, actions, channel, text, msg):
         """Rete per send_equipment nel dialogo con un leader straniero: (1) se manca il MITTENTE e
         il player sta RICEVENDO, il mittente = la nazione con cui parla (cosi' l'equip viene
@@ -1775,7 +2219,7 @@ class App:
         list (possibly empty if the narration warranted no action)."""
         try:
             history = self.memory.get_history(channel, self.max_history)
-            context = gs.context_for_llm(self.latest_state, self.world, self.states)
+            context = self._conversation_context(channel)
             wrapped = prompts.wrap_user(user_text, context, self.memory.facts_block())
             nudge = (
                 "[SYSTEM: your previous reply had narration but emitted NO actions. If that "
@@ -1828,6 +2272,9 @@ class App:
         retries by itself until the game CONFIRMS execution (ACK in game.log) — so the
         player never has to type 'run' manually if the first injection mistimes. Adds an
         ACK line and substitutes ROOT with the player's tag. Non-blocking."""
+        if getattr(self, "cfg", {}).get("unified"):
+            self.q.put(("action", "A legacy action was blocked. Unified mode uses typed, journaled actions only."))
+            return
         cmds = [c for c in (cmds or []) if c and c.strip()]
         if not cmds:
             return
@@ -1859,6 +2306,9 @@ class App:
         # overlay) torna in primo piano. Cosi' il 'run' non va mai fatto a mano.
         with self._inject_lock:
             self.injector.write_run_file(cmds)
+            if self.injector.dry_run:
+                self.q.put(("action", "Dry run: commands were displayed without changing the game."))
+                return
             deadline = time.time() + 600          # pazienza: fino a 10 minuti
             warned = False
             while time.time() < deadline and self.running:
@@ -2243,7 +2693,22 @@ class App:
 
 
 def main():
-    cfg = load_config()
+    parser = argparse.ArgumentParser(description="Voices of History source middleware")
+    parser.add_argument("--config", help="Path to a separate game profile configuration")
+    parser.add_argument("--userdir", help="Pin log and command paths to an explicit HOI4 user directory")
+    parser.add_argument("--characterization-source", help="Selected mod source resolved by the Paradox Voices launcher")
+    args = parser.parse_args()
+    cfg = load_config(args.config)
+    if args.userdir:
+        userdir = os.path.abspath(args.userdir)
+        cfg["paths"]["game_log"] = os.path.join(userdir, "logs", "game.log")
+        cfg["paths"]["_hoi4_userdirs"] = [userdir]
+        loc = cfg["paths"]["mod_localisation"].replace("\\", "/")
+        if "/mod/" not in loc:
+            raise ValueError("The localization path needs a mod-relative suffix for --userdir.")
+        cfg["paths"]["mod_localisation"] = os.path.join(userdir, "mod", loc.split("/mod/", 1)[1])
+    if args.characterization_source:
+        cfg["characterization"] = {"source": args.characterization_source}
     glog = cfg["paths"]["game_log"]
     print("=" * 60)
     print(" HOI4 AI MOD VOICES OF HISTORY - middleware started")
@@ -2251,7 +2716,12 @@ def main():
     print("           (found)" if os.path.exists(glog) else
           "           (not present yet: launch HoI4 and load a game)")
     print(" mod loc  :", cfg["paths"]["mod_localisation"])
-    print(" Player2  :", cfg["player2"]["base_url"])
+    print(" provider :", cfg.get("provider", "local"))
+    print(" profile  :", cfg.get("game_profile", "vanilla"))
+    if args.characterization_source:
+        print(" local character source :", args.characterization_source)
+    if cfg.get("provider") != "chatgpt_plan":
+        print(" endpoint :", cfg["player2"]["base_url"])
     print(" dry_run  :", cfg["injection"]["dry_run"])
     print("=" * 60)
     print(" Reminder: launch HoI4 in -debug mode so the commands work.")
@@ -2268,3 +2738,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# v1.1: bivi per-slot (aidiplo.40-45) — le scelte dei piani concorrenti non si mescolano piu'.

@@ -4,6 +4,8 @@ Parsing delle righe di stato scritte da HoI4 nel game.log:
   AIDIPLO_STATE|date=...|tag=GER|name=Germany|...
 e costruzione di un contesto leggibile per l'LLM.
 """
+import re
+from profiles import IDEOLOGY_LABELS
 
 IDEOLOGY = {
     "1": "Fascism",
@@ -28,7 +30,8 @@ def parse_state_line(line):
             state[k.strip()] = v.strip()
     if "tag" not in state:
         return None
-    state["ideology_name"] = IDEOLOGY.get(state.get("ideo", "0"), "Unknown")
+    labels = IDEOLOGY_LABELS.get(state.get("profile"), IDEOLOGY)
+    state["ideology_name"] = labels.get(state.get("ideo", "0"), "Unknown")
     return state
 
 
@@ -103,6 +106,68 @@ def parse_tag_line(line):
     return None
 
 
+def diplomatic_contact(info, state, world=None):
+    """Resolve a foreign chat against the synchronized player and latest nation export."""
+    player = str(state.get("tag", "")).upper()
+    target = str(info.get("target", "")).upper()
+    logged_player = str(info.get("player", "")).upper()
+    if not all(re.fullmatch(r"[A-Z][A-Z0-9]{2}", tag)
+               for tag in (player, target, logged_player)):
+        raise ValueError("Sync the current campaign before opening a foreign-country chat.")
+    if logged_player != player:
+        raise ValueError("The diplomatic request belongs to another player country; reopen diplomacy.")
+    if target == player:
+        raise ValueError("Select another country for diplomacy; use the Head of State Office for your own.")
+    nation = (world or {}).get(target, {})
+    return {"target": target, "player": player,
+            "tname": nation.get("name") or info.get("tname") or target,
+            "tleader": nation.get("leader") or info.get("tleader") or "Unknown representative"}
+
+
+def diplomatic_roster(state, world):
+    """Selectable foreign representatives from this campaign's synchronized country export."""
+    contacts = []
+    for tag, nation in (world or {}).items():
+        try:
+            contact = diplomatic_contact({"target": tag, "player": state.get("tag", "")},
+                                         state, world)
+        except ValueError:
+            continue
+        contact["ideology_name"] = nation.get("ideology_name", "Unknown")
+        contacts.append(contact)
+    return sorted(contacts, key=lambda contact: (contact["tname"].casefold(), contact["target"]))
+
+
+def diplomatic_context(state, world, info):
+    """Always include the chosen counterpart, even when it is a minor outside the key roster."""
+    contact = diplomatic_contact(info, state, world)
+    nation = (world or {}).get(contact["target"], {})
+    def flag(key):
+        return {"1": "Yes", "0": "No"}.get(nation.get(key), "Unknown")
+    lines = ["=== DIPLOMATIC COUNTERPART ===",
+             f"You represent: {contact['tname']} ({contact['target']})",
+             f"Your leader/representative: {contact['tleader']}",
+             f"The human player represents: {state.get('name', '?')} ({contact['player']})",
+             f"Current campaign date: {state.get('date', '?')}",
+             f"Counterpart snapshot date: {nation.get('date', 'not exported')}",
+             f"Your ruling ideology/outlook: {nation.get('ideology_name', 'Unknown')}",
+             f"At war with the player: {flag('waryou')}",
+             f"In the same faction as the player: {flag('facyou')}",
+             f"Subject of the player: {flag('subjyou')}",
+             f"Subject of another country: {flag('subj')}",
+             f"Borders the player: {flag('nb')}",
+             f"Capitulated: {flag('cap')}"]
+    if nation:
+        lines.append("Your exported national situation: " + _nation_line(nation))
+    else:
+        lines.append("National situation unavailable. Do not invent government or diplomatic facts.")
+    lines += ["Player-state statistics belong to the player, not to your country.",
+              "Missing treaties, opinion values, trade, stockpiles and military positions are unknown.",
+              "Use the counterpart snapshot date to judge freshness; reopen diplomacy to refresh it.",
+              "================================"]
+    return "\n".join(lines)
+
+
 def parse_plan_done(line):
     """AIDIPLO_PLAN_DONE|slot=N -> indice slot del piano completato."""
     marker = "AIDIPLO_PLAN_DONE|"
@@ -119,18 +184,30 @@ def parse_plan_done(line):
 
 
 def parse_choice(line):
-    """AIDIPLO_CHOICE|c=N -> scelta dell'opzione (1=A, 2=B) in un bivio di piano."""
+    """AIDIPLO_CHOICE|slot=S|c=N (bivi per-slot, eventi aidiplo.40-45) oppure
+    AIDIPLO_CHOICE|c=N (canale condiviso aidiplo.46: guerra civile / legacy).
+    Ritorna {"slot": int|None, "c": int} — lo slot permette al middleware di attribuire
+    la scelta al piano GIUSTO anche con piu' bivi aperti contemporaneamente."""
     marker = "AIDIPLO_CHOICE|"
     idx = line.find(marker)
     if idx == -1:
         return None
+    slot, c = None, None
     for part in line[idx + len(marker):].strip().split("|"):
+        part = part.strip()
         if part.startswith("c="):
             try:
-                return int(part.split("=", 1)[1])
+                c = int(part.split("=", 1)[1])
             except Exception:
                 return None
-    return None
+        elif part.startswith("slot="):
+            try:
+                slot = int(part.split("=", 1)[1])
+            except Exception:
+                slot = None
+    if c is None:
+        return None
+    return {"slot": slot, "c": c}
 
 
 def parse_ack(line):
@@ -198,7 +275,8 @@ def parse_nation(line):
             out[k.strip()] = v.strip()
     if not out.get("tag"):
         return None
-    out["ideology_name"] = IDEOLOGY.get(out.get("ideo", "0"), "Unknown")
+    labels = IDEOLOGY_LABELS.get(out.get("profile"), IDEOLOGY)
+    out["ideology_name"] = labels.get(out.get("ideo", "0"), "Unknown")
     return out
 
 
@@ -284,7 +362,8 @@ def world_snapshot_block(world):
         for n in others:
             groups.setdefault(n.get("ideology_name", "Unknown"), []).append(n)
         out.append("ALL OTHER nations (compact roster — name(TAG), flags only if notable):")
-        for ideo in ("Fascism", "Communism", "Democracy", "Non-Aligned", "Unknown"):
+        # Overhauls define their own political groups. Include every exported label.
+        for ideo in sorted(groups):
             grp = groups.get(ideo)
             if not grp:
                 continue
@@ -356,6 +435,7 @@ def context_for_llm(state, world=None, states=None):
     subj = g('is_subject') == '1'
     block = (
         "=== CURRENT WORLD STATE (HoI4) ===\n"
+        f"Game profile: {g('profile', 'vanilla')}\n"
         f"Date: {g('date')}\n"
         f"Player nation: {g('name')} ({g('tag')})\n"
         f"Head of State: {g('leader')}\n"

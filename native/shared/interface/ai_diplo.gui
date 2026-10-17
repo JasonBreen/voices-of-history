@@ -1,0 +1,30 @@
+guiTypes = {
+
+	# --------------------------------------------------------
+	#  BOTTONE "PARLA CON IL LEADER (IA)" nella schermata
+	#  DIPLOMATICA della nazione selezionata (tasto destro -> Diplomazia).
+	#  Funziona con QUALSIASI nazione del mondo.
+	#  Se la posizione si sovrappone ad altri elementi, cambia x/y qui.
+	# --------------------------------------------------------
+	containerWindowType = {
+		name = "ai_diplo_diplo_button_window"
+		# TFR uses the title strip for opinions, stability and war support.
+		# English TFR layout: visible gap after Diplomacy, before opinion flags at x=258.
+		# The Voices panel also has a Talk to country selector.
+		position = { x = 145 y = -40 }
+		size = { width = 102 height = 31 }
+		clipping = no
+		Orientation = upper_left
+
+		buttonType = {
+			name = "ai_diplo_talk_button"
+			position = { x = 0 y = 0 }
+			quadTextureSprite = "GFX_sort_button_100x29_2"
+			buttonText = "ai_diplo_talk_button_short"
+			pdx_tooltip = "ai_diplo_talk_button_desc"
+			font = "VCR02_12"
+			clicksound = click_close
+			Orientation = upper_left
+		}
+	}
+}

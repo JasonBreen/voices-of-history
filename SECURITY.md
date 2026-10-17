@@ -1,5 +1,12 @@
 # Is it safe? — Security & transparency
 
+> The original Player2 path remains local by default. Optional cloud providers send the
+> selected briefing and dialogue to their configured service. ChatGPT sign-in stores tokens
+> with Windows DPAPI in ignored `middleware/user-data/`; compatible-provider credentials
+> are read only from an explicitly named environment variable. Never commit either.
+> Usage/action journals and generated-installation backups are local runtime data.
+> Read [extension boundaries](docs/EXTENSIONS.md) before enabling them.
+
 This project is **open source** so you don't have to take our word for it: you can read every line,
 run it from source, or build the launcher yourself. This page explains exactly what the companion
 app does on your PC, what it touches, and — just as importantly — what it does **not** do.
@@ -23,12 +30,13 @@ to a **local AI**. Concretely, while you play it:
 - **Stores a small local file** (`ai_diplo_memory.sqlite3`) with the chat/plan history for your save.
 
 ## What it does NOT do
-- **No telemetry, no analytics, no accounts, no cloud.** Your conversations and game data never
-  leave your PC.
-- **No network access** except: your **local** AI on `localhost`, and a one-time `pip install` from
-  the official Python package index (PyPI) to fetch dependencies the first time. That's it.
-- **No changes** to your system, registry, or files outside the HoI4 mod/log folders and its own
-  local memory file.
+- **No app telemetry or analytics.** Conversations stay local with the default local endpoint.
+  Optional cloud providers receive the selected context; account and provider policies apply.
+- **Network access:** the configured local/remote model endpoint, optional OpenAI authorization/
+  JWKS/model/inference endpoints, and dependency installation from PyPI. Source references
+  are read locally, and only bounded matched excerpts join an opted-in provider request.
+- Runtime writes are limited to configured game/mod command/localisation paths and app data,
+  including local memory, budgets, action journals, optional encrypted tokens and owned-install backups.
 - **It does not read or send your personal files.**
 
 ## Dependencies

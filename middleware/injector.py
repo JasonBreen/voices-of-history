@@ -75,12 +75,20 @@ class Injector:
         userdir = os.path.dirname(os.path.dirname(gl)) if gl else "."
         self.run_name = "aidiplo.txt"
         self.run_file = os.path.join(userdir, self.run_name)
+        # cartelle utente HoI4 candidate (passate da main._autodetect): al momento di scrivere
+        # ri-scegliamo quella col game.log PIÙ FRESCO, così 'run aidiplo.txt' trova SEMPRE il file
+        # anche se il gioco è partito dopo il middleware o i Documenti sono su OneDrive.
+        self._userdirs = [d for d in (cfg["paths"].get("_hoi4_userdirs") or []) if d]
+        if userdir and userdir not in self._userdirs:
+            self._userdirs.insert(0, userdir)
 
     # ---------------- diagnostica ----------------
     def available(self):
         return (pdi is not None) or (pag is not None)
 
     def status_text(self):
+        if self.dry_run:
+            return "Dry run active. Planned game commands will be displayed only."
         libs = ["pydirectinput" if pdi else "pydirectinput MISSING",
                 "pyautogui" if pag else "pyautogui MISSING"]
         if not self.available():
@@ -171,10 +179,28 @@ class Injector:
             c = "eval_" + c
         return c
 
+    def _freshest_userdir(self):
+        """La cartella utente di HoI4 col game.log più recente = quella che il gioco sta
+        usando ADESSO (dove leggerà 'run aidiplo.txt'). Se nessun game.log, tiene la corrente."""
+        best, best_m = None, -1.0
+        for d in self._userdirs:
+            try:
+                m = os.path.getmtime(os.path.join(d, "logs", "game.log"))
+            except OSError:
+                continue
+            if m > best_m:
+                best, best_m = d, m
+        return best or os.path.dirname(self.run_file)
+
     def write_run_file(self, commands):
         cmds = [self._fix(c) for c in commands if c and c.strip()]
         if not cmds:
             return 0
+        if self.dry_run:
+            self.log("[DRY RUN] Planned game commands: " + " | ".join(cmds))
+            return len(cmds)
+        # aggiorna la destinazione alla cartella col game.log più fresco (robusto su OneDrive)
+        self.run_file = os.path.join(self._freshest_userdir(), self.run_name)
         try:
             os.makedirs(os.path.dirname(self.run_file), exist_ok=True)
             with open(self.run_file, "w", encoding="utf-8") as f:
@@ -258,6 +284,10 @@ class Injector:
 
     # ---------------- localizzazione dinamica (per gli eventi) ----------------
     def _set_loc_keys(self, mapping):
+        if self.dry_run:
+            self._loc_sig = repr(sorted((str(k), str(v)) for k, v in mapping.items()))
+            self.log("[DRY RUN] Planned localisation keys: " + ", ".join(mapping))
+            return
         path = self.loc_path
         if not os.path.isfile(path):
             self.log(f"[injector] file loc non trovato: {path}")
@@ -313,21 +343,29 @@ class Injector:
                 f"eval_effect {actor} = {{ set_variable = {{ aidiplo_act = {act} }} }}",
                 f"event aidiplo.2 {actor}"]
 
-    def prepare_decision_event(self, title, desc, opt_a, opt_b, opt_c=None):
-        """Evento DECISIONE intermedia (aidiplo.46): 2 opzioni preimpostate + una 3a
-        ('scrivi tu') che apre il canale evento del middleware. Le etichette delle opzioni
-        e il titolo vengono ACCORCIATI per non sforare i bottoni/lo spazio dell'evento."""
+    def prepare_decision_event(self, title, desc, opt_a, opt_b, opt_c=None, slot=None):
+        """Evento DECISIONE intermedia: 2 opzioni preimpostate + una 3a ('scrivi tu') che
+        apre il canale evento del middleware. Le etichette delle opzioni e il titolo vengono
+        ACCORCIATI per non sforare i bottoni/lo spazio dell'evento.
+        slot: se e' lo 0-5 di un PIANO usa l'evento DEDICATO a quello slot (aidiplo.40-45,
+        chiavi loc separate + scelta loggata con slot=N): cosi' piu' bivi aperti insieme non
+        si sovrascrivono i testi ne' si scambiano le risposte. slot=None (guerra civile /
+        legacy) usa il canale condiviso aidiplo.46 come prima."""
         def _cap(s, n):
             s = (s or "").strip()
             return s if len(s) <= n else s[:n - 1].rstrip() + "…"
+        try:
+            ev = 40 + int(slot) if slot is not None and 0 <= int(slot) <= 5 else 46
+        except Exception:
+            ev = 46
         self._set_loc_keys({
-            "aidiplo.46.t": _cap(title, 48) or "Plan Crossroads",
-            "aidiplo.46.d": desc or "The plan requires a decision.",
-            "aidiplo.46.a": _cap(opt_a, 42) or "Option A",
-            "aidiplo.46.b": _cap(opt_b, 42) or "Option B",
-            "aidiplo.46.c": opt_c or "Take personal command (write your own move)",
+            f"aidiplo.{ev}.t": _cap(title, 48) or "Plan Crossroads",
+            f"aidiplo.{ev}.d": desc or "The plan requires a decision.",
+            f"aidiplo.{ev}.a": _cap(opt_a, 42) or "Option A",
+            f"aidiplo.{ev}.b": _cap(opt_b, 42) or "Option B",
+            f"aidiplo.{ev}.c": opt_c or "Take personal command (write your own move)",
         })
-        return ["reload loc", "event aidiplo.46"]
+        return ["reload loc", f"event aidiplo.{ev}"]
 
     def prepare_reject(self, reason):
         self._set_loc_keys({

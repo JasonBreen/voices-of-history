@@ -11,6 +11,7 @@ accaduto FINO a quella data (le voci con day > giorno corrente vengono ignorate)
 Conserva: conversazioni, fatti/trattati, e i PIANI a tempo in sospeso (con il loro
 payload) cosi' sopravvivono alla chiusura del middleware e si riallineano al save.
 """
+from pathlib import Path
 import sqlite3
 import json
 import threading
@@ -19,10 +20,17 @@ import time
 
 class Memory:
     def __init__(self, db_path):
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.gameid = 0
         self.day = 0
+        # BUFFER PRE-IDENTIFICAZIONE: le scritture arrivate PRIMA di conoscere il gameid
+        # (all'avvio, finche' non e' passata la prima riga AIDIPLO_STATE) NON vanno mai
+        # salvate con gameid=0 — quel limbo veniva riletto da QUALSIASI partita e mescolava
+        # i ricordi ("parla di cose di partite precedenti"). Le teniamo in RAM e le
+        # attribuiamo alla partita giusta appena il gameid diventa noto.
+        self._pending_rows = []
         c = self.conn
         c.execute("""CREATE TABLE IF NOT EXISTS messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT, gameid INTEGER DEFAULT 0,
@@ -62,10 +70,32 @@ class Memory:
             self.gameid = int(gameid)
             self.day = int(day)
         except Exception:
-            pass
+            return
+        # la partita ora e' identificata: svuota il buffer pre-identificazione
+        # attribuendo le righe a QUESTA partita (mai a gameid=0)
+        if self.gameid > 0 and self._pending_rows:
+            rows, self._pending_rows = self._pending_rows, []
+            with self.lock:
+                for kind, args in rows:
+                    if kind == "msg":
+                        ch, role, content, ts = args
+                        self.conn.execute(
+                            "INSERT INTO messages(gameid,day,channel,role,content,ts) "
+                            "VALUES(?,?,?,?,?,?)",
+                            (self.gameid, self.day, ch, role, content, ts))
+                    else:
+                        fk, text, ts = args
+                        self.conn.execute(
+                            "INSERT INTO facts(gameid,day,kind,text,ts) VALUES(?,?,?,?,?)",
+                            (self.gameid, self.day, fk, text, ts))
+                self.conn.commit()
 
     # ---------------- messaggi ----------------
     def add_message(self, channel, role, content):
+        if self.gameid <= 0:
+            # partita non ancora identificata: buffer (flush in set_context)
+            self._pending_rows.append(("msg", (channel, role, content, time.time())))
+            return
         with self.lock:
             self.conn.execute(
                 "INSERT INTO messages(gameid,day,channel,role,content,ts) VALUES(?,?,?,?,?,?)",
@@ -75,34 +105,60 @@ class Memory:
     def first_player_message(self):
         """Il PRIMO messaggio scritto dal player in QUESTA partita (per fissare la LINGUA da usare
         in tutte le narrazioni, anche quelle autonome come i giornali che non hanno input)."""
+        if self.gameid <= 0:
+            return ""
         with self.lock:
             row = self.conn.execute(
                 "SELECT content FROM messages WHERE gameid=? AND role='user' AND content!='' "
                 "ORDER BY id ASC LIMIT 1", (self.gameid,)).fetchone()
         return (row[0] if row else "") or ""
 
-    def get_history(self, channel, limit=40):
+    def add_turn(self, channel, user_text, assistant_text, gameid, day):
+        """Store a completed exchange under its captured briefing, without changing shared context."""
+        if int(gameid) <= 0:
+            raise ValueError("A completed turn needs an identified campaign.")
+        with self.lock:
+            self.conn.executemany(
+                "INSERT INTO messages(gameid,day,channel,role,content,ts) VALUES(?,?,?,?,?,?)",
+                [(int(gameid), int(day), channel, role, content, time.time())
+                 for role, content in (("user", user_text), ("assistant", assistant_text))])
+            self.conn.commit()
+
+    def get_history(self, channel, limit=40, gameid=None, day=None):
+        gameid = self.gameid if gameid is None else int(gameid)
+        day = self.day if day is None else int(day)
+        if gameid <= 0:
+            return []
         with self.lock:
             rows = self.conn.execute(
                 "SELECT role,content FROM messages WHERE gameid=? AND day<=? AND channel=? "
                 "ORDER BY id DESC LIMIT ?",
-                (self.gameid, self.day, channel, limit)).fetchall()
+                (gameid, day, channel, limit)).fetchall()
         return [{"role": r, "content": c} for (r, c) in reversed(rows)]
 
     # ---------------- fatti ----------------
     def remember_fact(self, kind, text):
+        if self.gameid <= 0:
+            # partita non ancora identificata: buffer (flush in set_context)
+            self._pending_rows.append(("fact", (kind, text, time.time())))
+            return
         with self.lock:
             self.conn.execute(
                 "INSERT INTO facts(gameid,day,kind,text,ts) VALUES(?,?,?,?,?)",
                 (self.gameid, self.day, kind, text, time.time()))
             self.conn.commit()
 
-    def facts_block(self, limit=25):
+    def facts_block(self, limit=25, gameid=None, day=None):
+        gameid = self.gameid if gameid is None else int(gameid)
+        day = self.day if day is None else int(day)
+        if gameid <= 0:
+            # partita non identificata: MAI leggere il limbo gameid=0 (mescolerebbe partite)
+            return "No agreements/events recorded so far in this game."
         with self.lock:
             rows = self.conn.execute(
                 "SELECT kind,text FROM facts WHERE gameid=? AND day<=? "
                 "ORDER BY id DESC LIMIT ?",
-                (self.gameid, self.day, limit)).fetchall()
+                (gameid, day, limit)).fetchall()
         if not rows:
             return "No agreements/events recorded so far in this game."
         items = [f"[{k}] {t}" for (k, t) in reversed(rows)]
@@ -183,6 +239,27 @@ class Memory:
         with self.lock:
             self.conn.execute("DELETE FROM plans WHERE gameid=? AND created_day>?",
                               (self.gameid, current_day))
+            self.conn.commit()
+
+    def forget_future(self, day, ts_before):
+        """RAMO ABBANDONATO: il player ha caricato un salvataggio precedente e ha RIPRESO a
+        giocare da li'. Tutto cio' che era memorizzato con day > 'day' apparteneva a un futuro
+        che non esiste piu': senza questa pulizia, appena la nuova timeline superava quei
+        giorni, i vecchi ricordi RIAFFIORAVANO (l'IA 'ricordava' cose mai successe in questo
+        ramo). Doppia guardia:
+          - day > 'day'      -> solo il futuro del punto di caricamento;
+          - ts  < 'ts_before' -> solo righe scritte PRIMA del caricamento: le memorie NUOVE
+            della timeline corrente (stessi numeri di giorno, ma scritte dopo) sono salve."""
+        if self.gameid <= 0:
+            return
+        with self.lock:
+            for tbl in ("facts", "messages"):
+                self.conn.execute(
+                    f"DELETE FROM {tbl} WHERE gameid=? AND day>? AND ts<?",
+                    (self.gameid, int(day), float(ts_before)))
+            self.conn.execute(
+                "DELETE FROM plans WHERE gameid=? AND created_day>? AND ts<?",
+                (self.gameid, int(day), float(ts_before)))
             self.conn.commit()
 
     def revive_loaded_plans(self, current_day):

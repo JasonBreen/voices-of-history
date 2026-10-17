@@ -1,0 +1,44 @@
+{
+  "_README": "Opt-in example. Player2 is the default provider. All game effects start in dry run. See docs/EXTENSIONS.md.",
+  "provider": "player2",
+  "chatgpt_plan": {
+    "model": "",
+    "timeout_sec": 120
+  },
+  "player2": {
+    "base_url": "http://localhost:4315",
+    "chat_path": "/v1/chat/completions",
+    "health_path": "/v1/health",
+    "game_key": "hoi4-ai-diplomacy",
+    "model": "",
+    "timeout_sec": 120,
+    "temperature": 0.8
+  },
+  "paths": {
+    "game_log": "${USERPROFILE}/Documents/Paradox Interactive/Hearts of Iron IV/logs/game.log",
+    "mod_localisation": "${USERPROFILE}/Documents/Paradox Interactive/Hearts of Iron IV/mod/HOI4_AI_Voices_TFR/localisation/english/ai_diplo_l_english.yml",
+    "memory_db": "user-data/ai_diplo_tfr.sqlite3"
+  },
+  "injection": {
+    "console_key": "grave",
+    "input_method": "paste",
+    "window_title": "Hearts of Iron IV",
+    "key_delay": 0.02,
+    "pre_command_delay": 0.3,
+    "post_command_delay": 0.15,
+    "focus_game": true,
+    "reload_loc_after_event": true,
+    "dry_run": true
+  },
+  "behavior": {
+    "language": "it",
+    "max_history": 40,
+    "auto_execute_actions": true,
+    "realism_mode_file": "user-data/mode-the_fire_rises.txt",
+    "default_realism_mode": "plausible",
+    "enhanced_personalities": true,
+    "action_extraction": false,
+    "per_slot_events": true
+  },
+  "game_profile": "the_fire_rises"
+}

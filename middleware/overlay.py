@@ -27,10 +27,19 @@ C_ACT     = "#84e0a0"
 PANEL_W = 430
 
 
+def filter_countries(countries, query):
+    words = query.casefold().split()
+    return [country for country in countries
+            if all(word in " ".join(str(country.get(key, "")) for key in
+                                    ("target", "tname", "tleader", "ideology_name")).casefold()
+                   for word in words)]
+
+
 class ChatOverlay:
     def __init__(self, on_send, on_close=None, on_decree=None, on_life=None, on_test=None,
                  on_event_send=None, on_set_mode=None, current_mode="realistic",
-                 on_event_close=None):
+                 on_event_close=None, on_diplomacy=None, realism_choices=None, on_usage=None,
+                 prompt_for_mode=True):
         self.on_send = on_send
         self.on_close = on_close
         self.on_decree = on_decree
@@ -39,7 +48,11 @@ class ChatOverlay:
         self.on_event_send = on_event_send
         self.on_set_mode = on_set_mode
         self.current_mode = current_mode
+        self.realism_choices = realism_choices
         self.on_event_close = on_event_close
+        self.on_diplomacy = on_diplomacy
+        self.on_usage = on_usage
+        self.country_picker = None
         self.busy = False
         self.ev_busy = False
 
@@ -57,10 +70,16 @@ class ChatOverlay:
         self._build_settings()
         self._style_scrollbars()
 
-        # all'avvio: prima il selettore della MODALITA', poi la linguetta
+        # Only ask on first use or when the saved choice is invalid.
         self.root.withdraw()
         self.tab.withdraw()
-        self.settings_show()
+        self._show_startup(prompt_for_mode)
+
+    def _show_startup(self, prompt_for_mode):
+        if prompt_for_mode:
+            self.settings_show()
+        else:
+            self.hide_panel()
 
     # ============ PANNELLO ============
     def _build_panel(self):
@@ -80,10 +99,17 @@ class ChatOverlay:
         # --- riga azioni rapide (con CHIUDI/RIDUCI a destra, sempre visibili) ---
         bar = tk.Frame(r, bg=C_BG)
         bar.pack(fill="x", padx=8, pady=(6, 0))
-        # Supreme Command / Leader's Life si aprono IN GIOCO (decisioni). Qui solo Settings.
+        # Government channels open through in-game Decisions; foreign selection is also here.
         tk.Button(bar, text="Settings", command=self.settings_show, bg=C_BTN, fg=C_GOLD,
                   font=("Segoe UI", 8, "bold"), relief="flat",
                   activebackground=C_HEADER).pack(side="left", padx=2)
+        self.country_btn = tk.Button(bar, text="Talk to country", command=self._choose_country_click,
+                                     bg=C_BTN, fg=C_GOLD, font=("Segoe UI", 8, "bold"),
+                                     relief="flat", activebackground=C_HEADER)
+        self.country_btn.pack(side="left", padx=2)
+        if getattr(self, "on_usage", None):
+            tk.Button(bar, text="Usage / AI pilot", command=self.on_usage, bg=C_BTN, fg=C_GOLD,
+                      font=("Segoe UI", 8, "bold"), relief="flat").pack(side="left", padx=2)
         # quadrato ROSSO con X = riduci il pannello alla linguetta IA
         tk.Button(bar, text="X", command=self.hide_panel, bg="#b03030", fg="#ffffff",
                   font=("Segoe UI", 10, "bold"), relief="flat", width=3,
@@ -168,7 +194,8 @@ class ChatOverlay:
         # NON chiudere se il player sta scrivendo qualcosa. (self.entry e' un tk.Text: get()
         # VUOLE gli indici.) hide_panel() a pannello gia' chiuso e' comunque un no-op innocuo.
         try:
-            return not self.entry.get("1.0", "end").strip()
+            return not (self.country_picker and self.country_picker.winfo_exists()) and \
+                not self.entry.get("1.0", "end").strip()
         except Exception:
             return True
 
@@ -176,7 +203,144 @@ class ChatOverlay:
         if self.on_close:
             self.on_close()
 
+    def _choose_country_click(self):
+        if self.busy:
+            return
+        if self.on_diplomacy:
+            self.on_diplomacy()
+
+    def choose_country(self, countries, on_choose):
+        """Searchable selector; choosing a row opens chat without generating game actions."""
+        if self.country_picker and self.country_picker.winfo_exists():
+            self.country_picker.lift()
+            return
+        dialog = tk.Toplevel(self.root)
+        self.country_picker = dialog
+        dialog.title("Talk to another country")
+        dialog.configure(bg=C_BG)
+        dialog.transient(self.root)
+        dialog.attributes("-topmost", True)
+        width, height = min(720, self.sw - 60), min(480, self.sh - 80)
+        dialog.geometry(f"{width}x{height}+{(self.sw-width)//2}+{(self.sh-height)//2}")
+        tk.Label(dialog, text="Choose a country to speak with", bg=C_BG, fg=C_GOLD,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        tk.Label(dialog, text="Search by country, tag, representative or government.", bg=C_BG,
+                 fg=C_MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=12)
+        query = tk.StringVar(dialog)
+        search = tk.Entry(dialog, textvariable=query, bg=C_INPUT, fg=C_TEXT,
+                          insertbackground=C_TEXT, font=("Segoe UI", 10))
+        search.pack(fill="x", padx=12, pady=8)
+        frame = tk.Frame(dialog, bg=C_BG)
+        frame.pack(fill="both", expand=True, padx=12)
+        scrollbar = tk.Scrollbar(frame)
+        scrollbar.pack(side="right", fill="y")
+        choices = tk.Listbox(frame, bg=C_HIST, fg=C_TEXT, font=("Segoe UI", 10),
+                             selectbackground=C_BTN, selectforeground=C_GOLD,
+                             exportselection=False, yscrollcommand=scrollbar.set)
+        choices.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=choices.yview)
+        count = tk.Label(dialog, bg=C_BG, fg=C_MUTED, font=("Segoe UI", 9))
+        count.pack(anchor="w", padx=12, pady=4)
+        displayed = []
+
+        def close():
+            self.country_picker = None
+            dialog.destroy()
+
+        def select(event=None):
+            if self.busy:
+                count.config(text="Wait for the current reply before switching country.")
+                return
+            selection = choices.curselection()
+            if not selection:
+                return
+            contact = dict(displayed[selection[0]])
+            close()
+            on_choose(contact)
+
+        bar = tk.Frame(dialog, bg=C_BG)
+        bar.pack(fill="x", padx=12, pady=(0, 12))
+        talk = tk.Button(bar, text="Open conversation", command=select, bg=C_GOLD, fg=C_BG,
+                         font=("Segoe UI", 9, "bold"), relief="flat")
+        talk.pack(side="left")
+        tk.Button(bar, text="Cancel", command=close, bg=C_BTN, fg=C_TEXT,
+                  font=("Segoe UI", 9), relief="flat").pack(side="right")
+
+        def refresh(*unused):
+            displayed[:] = filter_countries(countries, query.get())
+            choices.delete(0, "end")
+            for country in displayed:
+                choices.insert("end", f"{country['tname']} ({country['target']}) — "
+                                      f"{country['tleader']} — {country['ideology_name']}")
+            count.config(text=f"{len(displayed)} countries")
+            talk.config(state="normal" if displayed else "disabled")
+            if displayed:
+                choices.selection_set(0)
+
+        query.trace_add("write", refresh)
+        refresh()
+        choices.bind("<Double-Button-1>", select)
+        choices.bind("<Return>", select)
+        search.bind("<Return>", select)
+        dialog.bind("<Escape>", lambda event: close())
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        dialog.after(100, search.focus_force)
+
     # ============ API per main.py ============
+    def show_usage(self, snapshot, pilot, countries, on_save, actions):
+        """A local allowance display; never present token counts as account percentages."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Voices usage and AI pilot")
+        dialog.configure(bg=C_BG)
+        dialog.attributes("-topmost", True)
+        dialog.geometry("680x720")
+        limits = snapshot["limits"]
+        lines = ["Rolling 24-hour allowance — shared by every Voices profile",
+                 f"All requests: {snapshot['calls']} / {limits['calls_per_day']}",
+                 f"Reported or reserved tokens: {snapshot['tokens']:,} / {limits['tokens_per_day']:,}",
+                 f"Automatic reviews: {snapshot['automatic_calls']} / {limits['automatic_calls_per_day']}",
+                 f"Automatic tokens: {snapshot['automatic_tokens']:,} / {limits['automatic_tokens_per_day']:,}",
+                 f"Automatic burst ceiling: {limits['automatic_calls_per_ten_minutes']} per ten minutes",
+                 f"Requests with estimated/pending usage: {snapshot['estimated_or_pending']}",
+                 "Provider cooldown active" if snapshot["provider_paused"] else "Provider cooldown: none",
+                 "This is local metering, not your remaining ChatGPT plan percentage.",
+                 "In ChatGPT: Settings > Usage > App limits > Voices of History.",
+                 (f"Your chosen weekly app cap: {limits['user_reported_weekly_app_cap_percent']}% (reported by you). Leave paid credits off."
+                  if limits.get("user_reported_weekly_app_cap_percent") else
+                  "Manage your weekly app cap in ChatGPT. Leave paid credits off.")]
+        tk.Label(dialog, text="\n".join(lines), bg=C_BG, fg=C_TEXT, justify="left",
+                 font=("Segoe UI", 10), wraplength=650).pack(anchor="w", padx=14, pady=12)
+        feedback = tk.StringVar()
+        if pilot is not None:
+            tk.Label(dialog, text="Select three AI major countries for weekly / major-crisis reviews",
+                     bg=C_BG, fg=C_GOLD, wraplength=650).pack(anchor="w", padx=14)
+            available = sorted(countries, key=lambda n: n.get("name", ""))
+            picker = tk.Listbox(dialog, selectmode="multiple", exportselection=False, height=7,
+                                bg=C_BTN, fg=C_TEXT, selectbackground=C_GOLD, selectforeground=C_BG)
+            picker.pack(fill="x", padx=14, pady=6)
+            for i, country in enumerate(available):
+                picker.insert("end", f"{country.get('name')} ({country['tag']}) — {country.get('leader', 'unknown')}")
+                if country["tag"] in pilot["countries"]:
+                    picker.selection_set(i)
+            enabled = tk.BooleanVar(value=pilot["enabled"])
+            tk.Checkbutton(dialog, text="Enable automatic reviews (preview until live use is approved)",
+                           variable=enabled, bg=C_BG, fg=C_TEXT, selectcolor=C_BTN,
+                           activebackground=C_BG, activeforeground=C_TEXT).pack(anchor="w", padx=14)
+            def save():
+                try:
+                    on_save([available[i]["tag"] for i in picker.curselection()], enabled.get())
+                    feedback.set("Saved. Reviews use new daily ticks; paused exports do not create requests.")
+                except ValueError as error:
+                    feedback.set(str(error))
+            tk.Button(dialog, text="Save pilot settings", command=save, bg=C_BTN, fg=C_GOLD).pack(anchor="w", padx=14, pady=5)
+        tk.Label(dialog, textvariable=feedback, bg=C_BG, fg=C_GOLD, wraplength=650).pack(anchor="w", padx=14)
+        tk.Label(dialog, text="Recent actions in this campaign", bg=C_BG, fg=C_GOLD).pack(anchor="w", padx=14, pady=(8, 0))
+        history = tk.Text(dialog, height=6, bg=C_BTN, fg=C_TEXT, wrap="word", font=("Segoe UI", 9))
+        history.pack(fill="both", expand=True, padx=14, pady=6)
+        history.insert("end", "\n".join(f"{a['state']}: {a['action']['name']} ({a['action']['actor']})" for a in actions) or "No actions recorded.")
+        history.configure(state="disabled")
+        tk.Button(dialog, text="Close", command=dialog.destroy, bg=C_BTN, fg=C_GOLD).pack(pady=8)
+
     def set_header(self, text):
         if len(text) > 36:
             text = text[:35] + "..."
@@ -187,6 +351,7 @@ class ChatOverlay:
         self.busy = busy
         self.send_btn.config(state="disabled" if busy else "normal",
                              text="..." if busy else "SEND")
+        self.country_btn.config(state="disabled" if busy else "normal")
         if not busy:
             self._clear_think(self.history)
 
@@ -437,7 +602,7 @@ class ChatOverlay:
             ("Sandbox", "sandbox",
              "Anything goes. The AI embraces any premise, even fantastical, and almost never refuses for realism."),
         ]
-        for label, key, desc in modes:
+        for label, key, desc in (self.realism_choices or modes):
             box = tk.Frame(f, bg=C_BTN)
             box.pack(fill="x", padx=16, pady=5)
             tk.Button(box, text=label, command=lambda k=key: self._set_mode_click(k),

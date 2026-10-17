@@ -1,0 +1,40 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- PyInstaller build artifacts ----
+build/
+dist/
+*.spec
+
+# ---- Built binary (ship it as a GitHub Release asset, NOT in the source tree,
+#      so the code stays auditable and people can build it themselves) ----
+*.exe
+
+# ---- Runtime files generated while playing (not part of the source).
+#      Listed unqualified so they're ignored wherever they're created
+#      (next to the source, or next to the built .exe). ----
+ai_diplo_memory.sqlite3
+*.sqlite3
+middleware/user-data/
+mode.txt
+language.txt
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Private setup and generated installation backups
+launcher-backup/
+launcher-bridge.json
+*.dpapi
+*.lock
+*.log
+.env*
+config.local.json
+*.sqlite3-*
