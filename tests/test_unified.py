@@ -135,7 +135,7 @@ class UnifiedNativeTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), formatted)
             for profile in ("vanilla", "millennium_dawn_oem", "cwic_dev", "the_fire_rises"):
                 install_or_compile(userdir, profile)
-                expected = render(profile)["descriptor.mod"] + f'path="{(userdir / "mod" / FOLDER).as_posix()}"\n'.encode()
+                expected = render(profile)["descriptor.mod"] + f'path="{(userdir / "mod" / FOLDER).resolve().as_posix()}"\n'.encode()
                 self.assertTrue(descriptor_matches(path.read_bytes(), expected))
 
     def test_descriptor_guard_rejects_meaningful_edits_without_overwriting_them(self):

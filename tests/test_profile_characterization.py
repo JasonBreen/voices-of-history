@@ -59,14 +59,14 @@ create_country_leader = {
             game = userdir / "game"
             (game / "history/countries").mkdir(parents=True)
             (userdir / "mod").mkdir()
-            self.assertEqual(characterization_source([ENTRY], userdir, game), game)
+            self.assertEqual(characterization_source([ENTRY], userdir, game), game.resolve())
             for base, profile in BASES.items():
                 source = userdir / profile
                 (source / "history/countries").mkdir(parents=True)
                 descriptor = userdir / base
                 descriptor.write_text(f'path="{source.as_posix()}"\n')
                 before = descriptor.read_bytes()
-                self.assertEqual(characterization_source([base, ENTRY], userdir, game), source)
+                self.assertEqual(characterization_source([base, ENTRY], userdir, game), source.resolve())
                 self.assertEqual(descriptor.read_bytes(), before)
             with self.assertRaises(RuntimeError):
                 characterization_source([*BASES, ENTRY], userdir, game)

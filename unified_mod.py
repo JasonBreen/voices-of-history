@@ -132,6 +132,10 @@ def render(profile, unified=True):
     if not unified:
         files = {p.relative_to(ROOT / "mod/HOI4_AI_Diplomacy").as_posix(): p.read_bytes()
                  for p in (ROOT / "mod/HOI4_AI_Diplomacy").rglob("*") if p.is_file()}
+        # All extensions share the same authored fixes; retain profile differences only.
+        shared = ROOT / "native/shared"
+        files.update({p.relative_to(shared).as_posix(): p.read_bytes()
+                      for p in shared.rglob("*") if p.is_file()})
         overlay = ROOT / "native/legacy" / profile
         if not overlay.is_dir():
             raise ValueError("No legacy adapter for profile: " + profile)
