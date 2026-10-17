@@ -32,6 +32,8 @@ def main():
     ico = os.path.join(here, "launcher.ico")
     if os.path.isfile(ico):
         cmd += ["--icon", ico]
+    cmd += ["--paths", os.path.join(here, "middleware"),
+            "--add-data", os.path.join(here, "middleware", "config.json") + os.pathsep + "."]
     cmd.append("launcher.py")
     print("Build:", " ".join(cmd))
     if subprocess.run(cmd).returncode != 0:

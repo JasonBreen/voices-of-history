@@ -16,6 +16,19 @@ Ogni azione ritorna:
   { "commands": [str...], "desc": str, "memory": str|None, "special": dict|None }
 """
 import re
+from profiles import (MD_ACTIONS, MD_CATALOG, MD_EQUIPMENT, MD_EQUIPMENT_ALIASES, MD_OEM,
+                      CWIC_DEV, CWIC_CATALOG, CWIC_EQUIPMENT, CWIC_EQUIPMENT_ALIASES,
+                      TFR, TFR_CATALOG, TFR_EQUIPMENT, TFR_EQUIPMENT_ALIASES,
+                      RESTRICTED_PROFILES)
+
+GAME_PROFILE = "vanilla"
+
+
+def configure_profile(profile):
+    global GAME_PROFILE
+    if profile not in ("vanilla", *RESTRICTED_PROFILES):
+        raise ValueError(f"Unknown game profile: {profile}")
+    GAME_PROFILE = profile
 
 # Mappa COMPLETA: qualsiasi modo (EN/IT, singolare/plurale, sinonimi) -> archetipo HoI4 reale
 # accettato da add_equipment_to_stockpile. Le chiavi sono gia' normalizzate (minuscolo, niente
@@ -80,6 +93,16 @@ def _resolve_equip(s):
     """Mappa QUALSIASI descrizione (EN/IT, plurali, sinonimi, gia'-archetipo) all'archetipo
     HoI4 corretto per add_equipment_to_stockpile. Default prudente: infantry_equipment SOLO se
     proprio non si capisce."""
+    if GAME_PROFILE in RESTRICTED_PROFILES:
+        raw = str(s or "").strip()
+        valid, aliases = {
+            MD_OEM: (MD_EQUIPMENT, MD_EQUIPMENT_ALIASES),
+            CWIC_DEV: (CWIC_EQUIPMENT, CWIC_EQUIPMENT_ALIASES),
+            TFR: (TFR_EQUIPMENT, TFR_EQUIPMENT_ALIASES),
+        }[GAME_PROFILE]
+        if raw in valid:
+            return raw
+        return aliases.get(raw.lower())
     raw = str(s or "").strip().lower()
     if not raw:
         return "infantry_equipment"
@@ -139,7 +162,7 @@ def infer_equipment_type(text):
     blob = str(text or "").lower()
     for pat, arch in _EQUIP_HINTS:
         if re.search(pat, blob):
-            return arch
+            return _resolve_equip(arch) if GAME_PROFILE in RESTRICTED_PROFILES else arch
     return None
 
 LAWS = {
@@ -158,10 +181,16 @@ FACTORY_TYPE = {"civilian": "industrial_complex", "military": "arms_factory",
 # Risorse strategiche di HoI4 (le UNICHE valide per add_resource)
 RESOURCES = {"oil", "steel", "aluminium", "tungsten", "chromium", "rubber"}
 RESOURCE_ALIAS = {
+    # EN
     "aluminum": "aluminium", "bauxite": "aluminium",
-    "coal": "steel", "iron": "steel", "iron_ore": "steel", "metal": "steel",
-    "petroleum": "oil", "fuel": "oil", "petrol": "oil",
-    "wolfram": "tungsten", "chrome": "chromium", "chromite": "chromium",
+    "coal": "steel", "iron": "steel", "iron_ore": "steel", "metal": "steel", "ore": "steel",
+    "petroleum": "oil", "fuel": "oil", "petrol": "oil", "gasoline": "oil", "crude": "oil",
+    "wolfram": "tungsten", "wolframite": "tungsten", "chrome": "chromium", "chromite": "chromium",
+    # IT
+    "acciaio": "steel", "ferro": "steel", "carbone": "steel", "metallo": "steel", "minerale": "steel",
+    "petrolio": "oil", "carburante": "oil", "benzina": "oil", "gomma": "rubber", "caucciu": "rubber",
+    "alluminio": "aluminium", "bauxite_it": "aluminium",
+    "tungsteno": "tungsten", "wolframio": "tungsten", "cromo": "chromium", "cromite": "chromium",
 }
 
 # Edifici di stato costruibili con add_building_construction (livello-stato)
@@ -346,6 +375,12 @@ def _sanitize_effect(e):
     if s.count("{") != s.count("}"):
         return ""
     kw = re.split(r"[\s=]", s, 1)[0]
+    if GAME_PROFILE in RESTRICTED_PROFILES:
+        stat = r"(?:add_stability|add_war_support|add_political_power|add_manpower|set_stability|set_war_support)\s*=\s*-?\d+(?:\.\d+)?"
+        spirit = r"ai_diplo_(?:war_drive|reform_strain|fortified|rival_progress)"
+        idea = rf"(?:add_ideas|remove_ideas)\s*=\s*{spirit}"
+        timed = rf"add_timed_idea\s*=\s*\{{\s*idea\s*=\s*{spirit}\s+days\s*=\s*\d+\s*\}}"
+        return s if re.fullmatch(rf"(?:{stat}|{idea}|{timed})", s) else ""
     if kw in BLOCKED_EFFECTS:
         return ""
     if kw in ("add_ideas", "remove_ideas", "swap_ideas", "add_timed_idea"):
@@ -398,6 +433,10 @@ def _act_event(act, actor, target, title, memory=None):
 def build_action(name, args):
     name = (name or "").strip()
     a = args or {}
+    if GAME_PROFILE in RESTRICTED_PROFILES and name not in MD_ACTIONS:
+        label = {MD_OEM: "Millennium Dawn", CWIC_DEV: "CWIC", TFR: "The Fire Rises"}[GAME_PROFILE]
+        return _r([], f"The {label} integration does not support '{name}' yet; "
+                      "no game change was made.")
 
     # ---------- ESCAPE HATCH ----------
     if name == "raw_console":
@@ -439,6 +478,9 @@ def build_action(name, args):
         # reale (support_equipment, artillery_equipment, anti_tank_equipment, *_tank_chassis,
         # fighter_equipment, ...). add_equipment_to_stockpile accetta l'ARCHETIPO.
         arch = _resolve_equip(a.get("equipment_type") or a.get("type"))
+        if not arch:
+            return _r([], "That equipment type has no verified mapping for this game profile; "
+                          "no equipment was transferred.")
         qty = int(_num(a.get("quantity") or a.get("amount"), 1000))
         if qty < 0:
             qty = -qty
@@ -446,7 +488,9 @@ def build_action(name, args):
         # parla il player (la persona IA). Se c'e' un mittente REALE diverso dal destinatario, e'
         # un TRASFERIMENTO: l'equip va AGGIUNTO al destinatario e TOLTO dallo stockpile del mittente.
         sender = _tag(a.get("sender") or a.get("from") or a.get("donor") or a.get("source"))
-        transfer = bool(sender) and sender != rec and not _is_player(sender)
+        # TRASFERIMENTO = c'e' un mittente diverso dal destinatario: l'equip va TOLTO dal mittente,
+        # CHIUNQUE esso sia, ANCHE il player (se sono io a donare, deve uscire dal MIO arsenale).
+        transfer = bool(sender) and sender != rec
         # producer = il costruttore dell'equip: il mittente se e' un trasferimento, altrimenti il
         # destinatario stesso (o ROOT se il destinatario e' il player).
         prod = sender if transfer else ("ROOT" if _is_player(rec) else rec)
@@ -999,6 +1043,12 @@ def build_action(name, args):
 
 
 def catalog_text():
+    if GAME_PROFILE == TFR:
+        return TFR_CATALOG
+    if GAME_PROFILE == CWIC_DEV:
+        return CWIC_CATALOG
+    if GAME_PROFILE == MD_OEM:
+        return MD_CATALOG
     return """\
 ACTION CATALOG ("actions" field). Use ONLY these names. The "target" values are 3-letter
 tags (GER, SOV, USA, ENG, FRA, ITA, JAP, POL, YUG...) or ROOT (the player).

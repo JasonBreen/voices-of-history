@@ -7,9 +7,11 @@ Client per l'API locale di Player2 (formato compatibile OpenAI).
 Funziona anche con OpenAI/altri backend OpenAI-compatibili cambiando base_url.
 """
 import json
+import os
 import re
 import time
 import requests
+from profiles import model_instructions, request_instructions, TFR
 
 
 class LLMClient:
@@ -23,13 +25,27 @@ class LLMClient:
         self.timeout = p2.get("timeout_sec", 120)
         self.temperature = p2.get("temperature", 0.8)
         self._last_heartbeat = 0.0
+        self.profile_instructions = model_instructions(cfg)
+        self.cfg = cfg
+
+    def _headers(self):
+        headers = {"Content-Type": "application/json"}
+        if self.cfg.get("provider", "player2") in ("player2", "local"):
+            headers["player2-game-key"] = self.game_key
+        name = self.cfg.get("player2", {}).get("api_key_env")
+        if name:
+            token = os.environ.get(name)
+            if not token:
+                raise ValueError("The configured provider credential environment variable is unset.")
+            headers["Authorization"] = "Bearer " + token
+        return headers
 
     # ---------- Heartbeat ----------
     def heartbeat(self):
         try:
             r = requests.get(
                 self.health_url,
-                headers={"player2-game-key": self.game_key},
+                headers=self._headers(),
                 timeout=10,
             )
             return r.ok
@@ -46,6 +62,10 @@ class LLMClient:
     # ---------- Chat ----------
     def chat(self, messages):
         """messages = lista di {role, content}. Ritorna il testo dell'assistente."""
+        self.last_usage = None
+        profile_instructions = request_instructions(self.cfg)
+        if profile_instructions:
+            messages = list(messages) + [{"role": "system", "content": profile_instructions}]
         body = {
             "messages": messages,
             "temperature": self.temperature,
@@ -53,29 +73,35 @@ class LLMClient:
         }
         if self.model:
             body["model"] = self.model
+        if getattr(self, "output_limit", None):
+            body["max_tokens"] = self.output_limit
 
-        headers = {
-            "Content-Type": "application/json",
-            "player2-game-key": self.game_key,
-        }
+        headers = self._headers()
         r = requests.post(self.chat_url, json=body, headers=headers, timeout=self.timeout)
         r.raise_for_status()
         data = r.json()
+        self.last_usage = data.get("usage") if isinstance(data, dict) else None
         return self._extract_text(data)
 
     @staticmethod
     def _extract_text(data):
-        # Formato OpenAI standard
-        try:
-            return data["choices"][0]["message"]["content"]
-        except Exception:
-            pass
-        # Alcune build di Player2 rispondono con campi diversi
-        for k in ("content", "message", "text", "response"):
-            if isinstance(data, dict) and k in data:
-                v = data[k]
-                return v if isinstance(v, str) else json.dumps(v)
-        return json.dumps(data)
+        if isinstance(data, dict):
+            choices = data.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message", {})
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    parts = [part["text"] for part in content if isinstance(part, dict)
+                             and part.get("type") == "text" and isinstance(part.get("text"), str)]
+                    if parts:
+                        return "".join(parts)
+            # Some Player2 versions use one direct assistant-text field.
+            for key in ("content", "message", "text", "response"):
+                if isinstance(data.get(key), str):
+                    return data[key]
+        raise ValueError("The provider returned no assistant text.")
 
     # ---------- Parsing risposta JSON dell'IA ----------
     @staticmethod

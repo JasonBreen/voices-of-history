@@ -1,0 +1,46 @@
+{
+  "base_commit": "061c3eb323f370b6296c36fb054eea4493194983",
+  "config": "75b9e9fb554ea419ed72200df32f7070793aacf7de9344defe1c467b64c03a61",
+  "native": "b01196fa3384839319271e6b80b8e57f4546eb79e76995fdcdde8fa539b337a7",
+  "prompt_arguments": {
+    "build_leader_system": [
+      "SOV",
+      "Soviet Union",
+      "Leader",
+      "USA"
+    ],
+    "build_decree_system": [
+      "USA",
+      "United States"
+    ],
+    "build_leaderlife_system": [
+      "USA",
+      "United States",
+      "Leader"
+    ],
+    "build_actor_system": [
+      "USA",
+      "United States"
+    ],
+    "build_event_system": [
+      "United States",
+      "USA",
+      "Leader"
+    ],
+    "build_crossroad_system": [
+      "United States",
+      "USA",
+      "Leader",
+      "leader",
+      "Plan"
+    ]
+  },
+  "prompts": {
+    "build_leader_system": "19c548651ae954fb07c1fde242ecf3ad2961e21259b24dcc59b8e7dabe794625",
+    "build_decree_system": "5832fb7d9f9a68b39742dc922ca94d5bf441b64ba3ec8569278de96265fd9316",
+    "build_leaderlife_system": "dc1809445fbea4b6a1d53e4913fcdeb6bb0b81af843345f355d1fd1513ad7b39",
+    "build_actor_system": "51318f659435a8fa6265b8dd20a87f96aad37e3c94a1bad5e223126f19ce7a20",
+    "build_event_system": "38cfe37458f5e5e991ca1091a84b2c0595b9a2dbc7794c089f2f8d0327b37168",
+    "build_crossroad_system": "f32f8d6a7ce9f8c50080754f79e3dc62878509f55e0497cf2d25ad7dc5a84f07"
+  }
+}

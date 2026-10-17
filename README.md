@@ -10,11 +10,16 @@ This package has two parts that work together:
 - **The mod** (`mod/HOI4_AI_Diplomacy`) — the in-game side: the diplomacy button, the decisions,
   the dynamic events and effects.
 - **The middleware** (`middleware/`) — a small companion app (the on-screen chat) that connects the
-  mod to your **own local AI** running in Player2. Nothing is sent to the cloud.
+  mod to your **own local AI** running in Player2. The default Player2 configuration is local; optional cloud providers send selected game context.
 
 Everything is driven from one window: **`VoicesOfHistory.exe`**.
 
 ---
+
+> Optional source extensions add MD/CWIC/TFR profiles, bounded leader references,
+> guarded dialogue/actions, ChatGPT plan or compatible providers, and a disabled-by-default
+> strategic pilot. The original Player2 configuration and base-game mod remain the default.
+> See [configuration, privacy, compatibility and tests](docs/EXTENSIONS.md).
 
 ## Requirements
 - **Hearts of Iron IV 1.19** (no Ironman — the mod uses console effects).
@@ -52,9 +57,9 @@ Everything is driven from one window: **`VoicesOfHistory.exe`**.
 ---
 
 ## Open source & safety
-This companion app is **fully open source** — read every line before you run it. It runs **entirely
-on your PC**: no telemetry, no accounts, no cloud. Its only network use is your **local** AI
-(Player2, on `localhost`) and a one-time `pip install` of dependencies from PyPI. See
+This companion app is **fully open source** — read every line before you run it. The default
+Player2 path uses local AI; explicitly selected cloud providers receive selected conversation
+and campaign context and can require account authorization. There is no app telemetry. See
 **[SECURITY.md](SECURITY.md)** for exactly what it reads/writes and how to verify it yourself.
 
 Prefer not to trust a binary? You can run it straight from source:
