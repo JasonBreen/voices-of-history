@@ -73,6 +73,17 @@ to inspect selection without starting either process. `VoicesLauncher.cs` is an
 optional source adapter for Paradox's executable entry; build it locally with the
 Windows C# compiler and keep the resulting binary private. No executable is shipped.
 
+The bridge permits unpacked radio-only extras alongside the matching adapter and
+overhaul. It checks both descriptors and the actual files, rather than trusting a
+mod name or Sound/Music tag alone. The supported layout is music plus MMCT station
+faceplates, radio-cover sprites and song localisation. Mods with gameplay files,
+replace paths, dependencies, archives or unrelated UI/localisation remain subject
+to the existing strict profile selection. Duplicate entries, mixed overhauls,
+older Voices adapters and an adapter loaded before its overhaul still fail.
+The radio entries stay enabled in the actual playset; `--check` lists them as
+`ignored_radio_mods` only for profile detection. Other sound-mod layouts are not
+automatically exempted.
+
 Regular MD is recognized by verified Workshop metadata (`ugc_2777392649.mod`) or
 `MD_LOCAL_STANDARD.mod`, including renamed selected descriptors with matching regular
 metadata. Other existing aliases recognize `Cold_War_Iron_Curtain.mod` and TFR's `ugc_3350890356.mod`. For another local filename,
