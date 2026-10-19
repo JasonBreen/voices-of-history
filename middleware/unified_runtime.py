@@ -98,6 +98,7 @@ class UnifiedRuntime:
             role = f"Write a brief {voice} newspaper report based on the exported campaign and recorded facts. Missing events stay unknown. No game actions. "
         elif channel in ("life", "actor"):
             role = "Narrate the requested domestic roleplay scene, keeping campaign facts and hypothetical events distinct. No game actions. "
+        catalog = CATALOG
         if self.cfg.get('proposals', {}).get('enabled'):
             role += ("Equipment transfers use persistent proposals: emit propose_equipment with sender, receiver, "
                      "equipment_type and quantity (null when unknown), decision=negotiate. Do not invent quantities. "
@@ -105,10 +106,16 @@ class UnifiedRuntime:
                      "Aircraft production/procurement is unsupported: no verified variant queue/delivery receipts. "
                      "Never claim contact with manufacturers, queued production, applied changes or delivered equipment "
                      "without the corresponding recorded engine evidence. ")
+            catalog = catalog.replace('Refusal/negotiation/information has\nactions=[].',
+                                      'Refusal/information has actions=[]. Negotiation may contain only propose_equipment drafts.')
+            catalog = catalog.replace('Actions need decision=accept', 'Executing actions need decision=accept')
+            catalog += ('\n- propose_equipment {sender,receiver,equipment_type,quantity}: a nonexecuting transfer draft; '
+                        'quantity is null when the player has not supplied it. Use decision=negotiate. '
+                        'The human supplies quantity and confirms the exact proposal id in later turns.\n')
         return (role + "Use exported facts before opening lore. Do not predetermine future branches. "
                 "Missing stockpiles, treaties, fronts and custom mechanics are unknown. " +
                 style + self._lang_directive(sample) + "\n" +
-                prompts.difficulty_block() + "\n" + CATALOG + "\nVerified equipment: " +
+                prompts.difficulty_block() + "\n" + catalog + "\nVerified equipment: " +
                 ", ".join(sorted(equipment_set(self.cfg["game_profile"]))))
 
     def _unified_context(self, channel, state, world):

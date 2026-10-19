@@ -40,7 +40,7 @@ def equipment_set(profile):
         profile, TFR_EQUIPMENT)
 
 
-def response_schema(profile):
+def response_schema(profile, proposals=False):
     """Responses structured output; authorization still belongs to validate()."""
     def obj(properties):
         return {"type": "object", "properties": properties,
@@ -64,10 +64,13 @@ def response_schema(profile):
         "priority": {"type": "string", "enum": ["hold", "infantry", "mobile"]}})
     political_power = variant(["add_political_power"], {"target": tag,
         "amount": {"type": "integer", "minimum": -5, "maximum": 5}})
+    variants = [diplomacy, equipment, priority, political_power]
+    if proposals:
+        variants.append(proposal)
     return obj({"message": {"type": "string"},
                 "decision": {"type": "string", "enum": ["inform", "negotiate", "refuse", "accept"]},
                 "actions": {"type": "array", "maxItems": 2,
-                            "items": {"anyOf": [diplomacy, equipment, priority, political_power, proposal]}}})
+                            "items": {"anyOf": variants}}})
 
 
 def _tag(value, player):

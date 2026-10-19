@@ -15,6 +15,7 @@ import telemetry
 from md_compat import is_oem, is_regular_md
 from proposals import Proposals, aircraft_order
 from safe_actions import ActionJournal, command, validate, response_schema
+from chatgpt_client import ChatGPTPlanClient
 from unified_runtime import UnifiedRuntime
 from unified_mod import CONFIGS, render, install_or_compile
 
@@ -112,6 +113,19 @@ class ProposalTests(unittest.TestCase):
 
     def create(self):
         return self.store.create(self.action, 'Please send us rifles', self.state, self.world, self.channel, self.profile)
+
+    def test_proposal_schema_is_opt_in_and_negotiation_catalog_has_no_conflict(self):
+        default = response_schema(self.profile)
+        opted = response_schema(self.profile, proposals=True)
+        self.assertNotIn('propose_equipment',json.dumps(default))
+        self.assertIn('propose_equipment',json.dumps(opted))
+        cfg = {'unified':True,'game_profile':self.profile,'proposals':{'enabled':True}}
+        self.assertIn('propose_equipment',json.dumps(ChatGPTPlanClient(cfg).response_schema))
+        app = UnifiedRuntime()
+        app.cfg,app._lang_directive = cfg,lambda _sample:''
+        system = app._unified_system(self.channel,self.state,self.world)
+        self.assertIn('Negotiation may contain only propose_equipment drafts',system)
+        self.assertNotIn('Refusal/negotiation/information has',system)
 
     def reply(self, text):
         return self.store.reply(text, self.state, self.world, self.channel, self.profile)

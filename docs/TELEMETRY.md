@@ -107,13 +107,17 @@ finite aircraft batch behavior has not been verified.
 The installed OEM history at `history/units/USA_2000_bba.txt:342` and
 `common/scripted_effects/99_USA_main_scripted_effects.txt:3892` names `F-22A Raptor`
 using `medium_plane_fighter_airframe_3` and
-`USA_lockheed_martin_aircraft_manufacturer`. That historical type is absent from
-the installed `common/units/equipment` and `common/technologies` definitions.
-The current equipment file defines `medium_plane_airframe_3` instead, a 2015 frame
-with base IC cost 33 and aluminium 2/composites 3/rubber 1 before module/design
-modifiers. Blindly substituting that token would not prove a valid F-22 design,
-technology unlock, module compatibility, final cost or current save availability.
-This source inconsistency needs OEM-side verification, separately from Voices.
+`USA_lockheed_martin_aircraft_manufacturer`. This is a generated role-specific
+type, not a missing equipment definition: `duplicate_archetypes` in
+`common/units/equipment/MD_x_plane_airframes.txt:112` derives the fighter archetype
+from `medium_plane_airframe`. Its `_3` derives from `medium_plane_airframe_3`,
+unlocked by `gen_5_medium` in `common/technologies/BBA_aircraft.txt:396`.
+The USA BBA starting history grants that technology and calls
+`USA_create_bba_air_variants`. The base frame has IC cost 33 and aluminium
+2/composites 3/rubber 1 before modules, upgrades, ideas and MIO modifiers.
+Production must retain the generated fighter type and exact named design;
+substituting the base airframe would change the requested equipment.
+Current-save availability and final costs still require native evidence.
 
 `has_design_based_on` verifies only a buildable non-obsolete design of an archetype,
 not the exact named variant. The installed script documentation yielded no verified
@@ -135,5 +139,5 @@ Offline tests cover opt-in rendering for vanilla/regular MD/OEM/CWIC/TFR,
 cross-profile/stale packet rejection, units/deficits/missing economy data, reversible
 owned compilation, persistent quantities/cancel/change/restart/duplicate races,
 dry-run gating and receipt identity. Existing vanilla asset/config regression tests
-remain in the suite. Native telemetry acceptance, the OEM historical aircraft
-inconsistency and all production execution remain pending a coordinated test run.
+remain in the suite. Native telemetry acceptance, current-save aircraft availability
+and all production execution remain pending a coordinated test run.
